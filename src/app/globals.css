@@ -264,3 +264,13 @@ a { color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .preview-layer { animation-duration: 0s !important; animation-iteration-count: 1 !important; }
 }
+
+/* ------------------------------------------------------------------ failures */
+.tile.failed { background: #3a1513; border-color: #6b2420; flex-grow: 3 !important; }
+.tile.failed span { color: #ffd6d1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 6px; max-width: 100%; }
+.failed-line {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  margin: 0 8px 8px 44px; padding: 8px 10px; border-radius: 9px; background: #2a1211; border: 1px solid #5a221e;
+  color: #ffd6d1; font-size: 0.84rem;
+}
+.small-btn { padding: 6px 11px; font-size: 0.84rem; }

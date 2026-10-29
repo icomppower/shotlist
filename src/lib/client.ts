@@ -2,9 +2,15 @@ import type { ProjectView, Shot } from "./types";
 
 export type EditableShot = Pick<Shot, "id" | "move" | "camera" | "duration" | "note" | "prompt">;
 
+export class ApiError extends Error {
+  constructor(message: string, public demo?: string) {
+    super(message);
+  }
+}
+
 async function json<T>(res: Response): Promise<T> {
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((body as { error?: string }).error ?? `Request failed (${res.status})`);
+  const body = (await res.json().catch(() => ({}))) as { error?: string; demo?: string };
+  if (!res.ok) throw new ApiError(body.error ?? `Request failed (${res.status})`, body.demo);
   return body as T;
 }
 
@@ -24,11 +30,11 @@ export const api = {
       body: JSON.stringify(body),
     }).then((r) => json<ProjectView>(r));
   },
-  generate(id: string, force: string[] = []) {
+  generate(id: string, opts: { force?: string[]; only?: string[] } = {}) {
     return fetch(`/api/projects/${id}/generate`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ force }),
+      body: JSON.stringify(opts),
     }).then((r) => json<{ submitted: string[]; project: ProjectView }>(r));
   },
 };

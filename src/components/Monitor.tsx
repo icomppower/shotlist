@@ -13,6 +13,7 @@ export function Monitor({
   shots,
   imageUrl,
   busy,
+  demo,
   uploading,
   onUpload,
 }: {
@@ -20,6 +21,8 @@ export function Monitor({
   shots: EditableShot[];
   imageUrl?: string;
   busy: boolean;
+  /** Renders are blocked (daily cap / no key): play the sample instead. */
+  demo: boolean;
   uploading: boolean;
   onUpload: (f: File) => void;
 }) {
@@ -72,6 +75,7 @@ export function Monitor({
   const statusById = new Map(view.shotsView.map((s) => [s.id, s]));
   const renderById = new Map(view.shots.map((s) => [s.id, s.render]));
   const stitching = out?.state === "stitching";
+  const anyFailed = view.shots.some((s) => s.render?.state === "failed" && !statusById.get(s.id)?.inFlight);
   const inFlightStarts = view.shots.filter((s) => statusById.get(s.id)?.inFlight).map((s) => s.render!.submittedAt);
   const runStart = inFlightStarts.length ? Math.min(...inFlightStarts) : (out?.startedAt ?? 0);
 
@@ -89,17 +93,20 @@ export function Monitor({
   return (
     <div className="monitor">
       <div className="screen">
-        {video ? (
+        {demo ? (
+          <video key="sample" src="/sample-trailer.mp4" controls playsInline autoPlay muted loop />
+        ) : video ? (
           <video key={video} src={video} controls playsInline autoPlay muted loop poster={imageUrl} />
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={imageUrl} alt="Uploaded source still" />
         )}
-        {updating && <span className="screen-tag">Updating…</span>}
-        {!video && !busy && <span className="screen-tag subtle">Source still</span>}
+        {demo && <span className="screen-tag">Demo limit reached — here’s a sample</span>}
+        {!demo && updating && <span className="screen-tag">Updating…</span>}
+        {!demo && !video && !busy && <span className="screen-tag subtle">Source still</span>}
       </div>
 
-      {(busy || stitching) && (
+      {(busy || stitching || anyFailed) && (
         <div className="strip" aria-label="Render progress">
           {shots.map((s, i) => {
             const st = statusById.get(s.id);
@@ -107,16 +114,17 @@ export function Monitor({
             const pct = st?.fresh ? 100 : st?.inFlight ? Math.round((r?.progress ?? 0) * 100) : 0;
             // Shots finished before this run started were reused, not re-rendered.
             const cached = st?.fresh && (r?.finishedAt ?? 0) < runStart;
-            const cls = cached ? "cached" : st?.fresh ? "done" : st?.inFlight ? "running" : "idle";
+            const failed = r?.state === "failed" && !st?.inFlight;
+            const cls = failed ? "failed" : cached ? "cached" : st?.fresh ? "done" : st?.inFlight ? "running" : "idle";
             return (
               <div
                 key={s.id}
                 className={`tile ${cls}`}
                 style={{ flexGrow: s.duration }}
-                title={cached ? `Shot ${i + 1}: reused` : `Shot ${i + 1}: ${pct}%`}
+                title={failed ? `Shot ${i + 1}: ${r?.error ?? ""}` : cached ? `Shot ${i + 1}: reused` : `Shot ${i + 1}: ${pct}%`}
               >
                 <div className="fill" style={{ width: `${pct}%` }} />
-                <span className="mono">{i + 1}</span>
+                <span className="mono">{failed ? `${i + 1} · ${r?.failReason ?? "Render failed"}` : i + 1}</span>
               </div>
             );
           })}

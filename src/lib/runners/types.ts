@@ -4,6 +4,10 @@ import type { CameraParams, Mode } from "../moves";
 export interface ShotJobInput {
   projectId: string;
   shotId: string;
+  /** 0-based position in the shot list. */
+  shotIndex: number;
+  /** 1 for the shot's first render, 2 for the next, … */
+  attempt: number;
   /** Absolute path of the uploaded source image on this server. */
   imagePath: string;
   imageMime: string;
@@ -28,6 +32,8 @@ export interface JobStatus {
   state: JobState;
   /** 0..1 */
   progress: number;
+  /** Short user-facing reason when failed, e.g. "Refused by LTX". */
+  reason?: string;
   error?: string;
 }
 

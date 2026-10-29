@@ -15,6 +15,9 @@ export interface ShotRender {
   state: RenderState;
   /** 0..1 */
   progress: number;
+  /** Short reason shown to the user when failed, e.g. "Refused by LTX". */
+  failReason?: string;
+  /** Full error detail when failed. */
   error?: string;
   /** File name of the clip inside the project dir, once done. */
   clip?: string;
@@ -80,6 +83,8 @@ export interface ProjectView extends Project {
     /** Prompt that would be sent right now. */
     prompt: string;
   }>;
+  /** Set when renders are blocked and the sample trailer is shown instead. */
+  demo: "cap" | "no-key" | null;
   /** Output matches the current shot list and is done. */
   outputFresh: boolean;
   expectedDuration: number;

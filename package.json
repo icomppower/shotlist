@@ -9,9 +9,10 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "e2e:mock": "node scripts/e2e-mock.mjs"
+    "e2e:mock": "next build && node scripts/e2e-mock.mjs"
   },
   "dependencies": {
+    "@vercel/blob": "^2.8.2",
     "ffmpeg-static": "^5.3.0",
     "next": "^16.4.3",
     "react": "^19.3.1",

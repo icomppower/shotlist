@@ -12,7 +12,7 @@ export async function POST(req: Request) {
     const image = form.get("image");
     if (!(image instanceof File)) throw new HttpError(400, "Missing image.");
     const project = await createProject(image);
-    return NextResponse.json(toView(project), { status: 201 });
+    return NextResponse.json(await toView(project), { status: 201 });
   } catch (err) {
     return errorResponse(err);
   }

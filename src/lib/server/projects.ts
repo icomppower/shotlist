@@ -1,11 +1,10 @@
 import "server-only";
-import { promises as fs } from "node:fs";
 import {
   DEFAULT_DURATION, DEFAULT_MANUAL_CAMERA, MANUAL_LIMITS, MAX_DURATION, MIN_DURATION,
   isMode, isMoveId, planPrompt, type ManualCamera, type MoveId,
 } from "../moves";
 import type { Project, Shot } from "../types";
-import { newId, projectDir, projectFile, writeProject } from "./storage";
+import { getStorage, newId, projectKey, writeProject } from "./storage";
 
 /** First-run sequence: Generate works the moment an image is dropped. */
 export const STARTER_MOVES: MoveId[] = ["slow_push_in", "bullet_orbit", "crash_zoom", "crane_reveal"];
@@ -34,9 +33,8 @@ export async function createProject(image: File): Promise<Project> {
   if (!ext) throw new HttpError(415, "Upload a JPEG, PNG or WebP image.");
   if (image.size > MAX_IMAGE_BYTES) throw new HttpError(413, "Image is larger than 20 MB.");
   const id = newId(6);
-  await fs.mkdir(projectDir(id), { recursive: true });
   const file = `source.${ext}`;
-  await fs.writeFile(projectFile(id, file), Buffer.from(await image.arrayBuffer()));
+  await getStorage().put(projectKey(id, file), Buffer.from(await image.arrayBuffer()), image.type);
   const now = Date.now();
   const project: Project = {
     id,

@@ -6,7 +6,7 @@ import {
   type Mode, type MoveId,
 } from "@/lib/moves";
 import type { ProjectView } from "@/lib/types";
-import { api, clientId, fileUrl, toEditable, type EditableShot } from "@/lib/client";
+import { ApiError, api, clientId, fileUrl, toEditable, type EditableShot } from "@/lib/client";
 import { MovePreview } from "./MovePreview";
 import { ShotEditor } from "./ShotEditor";
 import { Monitor } from "./Monitor";
@@ -22,6 +22,7 @@ export function Studio({ projectId }: { projectId?: string }) {
   const [busyAction, setBusyAction] = useState<"upload" | "generate" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(!!projectId);
+  const [demoHit, setDemoHit] = useState(false);
 
   const id = view?.id;
   const latest = useRef({ shots, mode });
@@ -111,16 +112,17 @@ export function Studio({ projectId }: { projectId?: string }) {
     }
   };
 
-  const generate = async (force: string[] = []) => {
+  const generate = async (opts: { force?: string[]; only?: string[] } = {}) => {
     if (!id) return;
     setError(null);
     setBusyAction("generate");
     try {
       await flush();
-      const res = await api.generate(id, force);
+      const res = await api.generate(id, opts);
       adopt(res.project, false);
     } catch (e) {
-      setError((e as Error).message);
+      if (e instanceof ApiError && e.demo) setDemoHit(true);
+      else setError((e as Error).message);
     } finally {
       setBusyAction(null);
     }
@@ -192,7 +194,9 @@ export function Studio({ projectId }: { projectId?: string }) {
   const stale = view ? view.shotsView.filter((s) => !s.fresh && !s.inFlight).length : 0;
   const hasOutput = !!view?.output?.file;
   let cta = "Generate video";
-  let ctaDisabled = !view || shots.length === 0 || busyAction !== null;
+  // Blocked renders show the sample — but never over the user's own finished cut.
+  const demo = (demoHit || !!view?.demo) && !view?.outputFresh;
+  let ctaDisabled = !view || shots.length === 0 || busyAction !== null || demo;
   if (busy) {
     const done = view!.shotsView.filter((s) => s.fresh).length;
     cta = view!.output?.state === "stitching" && done === shots.length ? "Stitching…" : `Rendering ${done}/${shots.length}…`;
@@ -247,6 +251,7 @@ export function Studio({ projectId }: { projectId?: string }) {
             shots={shots}
             imageUrl={imageUrl}
             busy={busy}
+            demo={demo}
             uploading={busyAction === "upload"}
             onUpload={upload}
           />
@@ -332,15 +337,28 @@ export function Studio({ projectId }: { projectId?: string }) {
                         imageUrl={imageUrl}
                         canRetake={!!st?.fresh && !busy}
                         onChange={(patch) => patchShot(s.id, patch)}
-                        onRetake={() => void generate([s.id])}
+                        onRetake={() => void generate({ force: [s.id], only: [s.id] })}
                       />
+                    )}
+
+                    {r?.state === "failed" && st && !st.inFlight && (
+                      <p className="failed-line" role="alert">
+                        <span>{r.failReason ?? "Render failed"} — the video won’t stitch until this shot is fixed.</span>
+                        <button
+                          className="btn small-btn"
+                          disabled={busyAction !== null || demo}
+                          onClick={() => void generate({ only: [s.id] })}
+                        >
+                          Edit &amp; retry
+                        </button>
+                      </p>
                     )}
 
                     {r && (
                       <p className="sent">
                         <span className="sent-label">Sent to LTX:</span>{" "}
                         <code>{r.sentPrompt === "" ? "(empty prompt)" : r.sentPrompt}</code>
-                        {st && !st.fresh && !st.inFlight && <span className="changed"> · changed, re-sends on next generate</span>}
+                        {st && !st.fresh && !st.inFlight && r.state !== "failed" && <span className="changed"> · changed, re-sends on next generate</span>}
                       </p>
                     )}
                   </li>

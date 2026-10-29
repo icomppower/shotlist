@@ -6,13 +6,14 @@ import { CROSSFADE_SECONDS, planPrompt, type CameraParams } from "../moves";
 import type { Project, ProjectView, Shot } from "../types";
 import { getRunner } from "../runners";
 import { VIDEO } from "./ffmpeg";
+import { DemoLimitError, demoReason, reserveShots } from "./limits";
 import { stitchClips } from "./stitch";
-import { hash, projectFile, withProject } from "./storage";
+import { getStorage, hash, projectKey, scratchFile, withProject } from "./storage";
 
 /**
  * Orchestration is poll-driven: every GET of a project advances its jobs
  * (status -> fetch clip -> stitch). No long-lived worker is needed, which is
- * what the Comfy runner on serverless will want too.
+ * what the Comfy runner on serverless wants too.
  */
 
 /** The exact prompt a shot sends in the project's current mode. */
@@ -44,7 +45,7 @@ export function stitchKey(p: Project): string {
   return hash([CROSSFADE_SECONDS, ...p.shots.map((s) => s.render?.clip ?? "-")].join("|"));
 }
 
-export function toView(p: Project): ProjectView {
+export async function toView(p: Project): Promise<ProjectView> {
   const shotsView = p.shots.map((s) => ({
     id: s.id,
     fresh: isFresh(p, s),
@@ -59,26 +60,45 @@ export function toView(p: Project): ProjectView {
     shotsView,
     outputFresh: allFresh && p.output?.state === "done" && p.output.key === stitchKey(p),
     expectedDuration: Math.max(total, 0),
+    demo: await demoReason(),
   };
 }
 
 /**
- * Submit every shot whose current settings have no done/in-flight render.
- * `force` shot ids get a new take (new seed) even if they are up to date.
- * Returns the ids that were submitted.
+ * Submit every shot whose current settings have no done/in-flight render
+ * (failed shots count as out of date). `force` ids get a new take even if up
+ * to date; `only`, when given, limits submission to those ids.
+ * Throws DemoLimitError if the renders would exceed the daily cap.
  */
-export async function submitStale(p: Project, force: string[] = []): Promise<string[]> {
+export async function submitStale(p: Project, opts: { force?: string[]; only?: string[] } = {}): Promise<string[]> {
   const runner = getRunner();
-  const submitted: string[] = [];
-  for (const s of p.shots) {
+  const force = opts.force ?? [];
+  const todo = p.shots
+    .map((s, index) => ({ s, index }))
+    .filter(({ s }) => !opts.only || opts.only.includes(s.id))
+    .filter(({ s }) => {
+      const r = s.render;
+      if (force.includes(s.id)) return true;
+      return !(r && r.key === renderKey(p, s) && r.state !== "failed");
+    });
+  if (todo.length === 0) return [];
+
+  const why = await demoReason();
+  if (why === "no-key") throw new DemoLimitError(why);
+  if (!(await reserveShots(todo.length))) throw new DemoLimitError("cap");
+
+  const imagePath = await getStorage().localPath(projectKey(p.id, p.image.file));
+  for (const { s, index } of todo) {
     if (force.includes(s.id)) s.take += 1;
     const key = renderKey(p, s);
-    if (s.render?.key === key && s.render.state !== "failed") continue;
     const prompt = resolvePrompt(p, s);
+    s.renderCount += 1;
     const { jobId } = await runner.submitShot({
       projectId: p.id,
       shotId: s.id,
-      imagePath: projectFile(p.id, p.image.file),
+      shotIndex: index,
+      attempt: s.renderCount,
+      imagePath,
       imageMime: p.image.mime,
       mode: p.mode,
       prompt,
@@ -93,25 +113,23 @@ export async function submitStale(p: Project, force: string[] = []): Promise<str
       jobId, runner: runner.name, key, mode: p.mode, sentPrompt: prompt,
       state: "queued", progress: 0, submittedAt: Date.now(),
     };
-    s.renderCount += 1;
-    submitted.push(s.id);
   }
-  return submitted;
+  return todo.map(({ s }) => s.id);
 }
 
-async function saveClip(url: string, dest: string) {
-  if (url.startsWith("file:")) {
-    await fs.copyFile(fileURLToPath(url), dest);
-    return;
-  }
+async function downloadClip(url: string): Promise<string> {
+  if (url.startsWith("file:")) return fileURLToPath(url);
   const res = await fetch(url);
   if (!res.ok) throw new Error(`clip download failed: ${res.status}`);
-  await fs.writeFile(dest, Buffer.from(await res.arrayBuffer()));
+  const tmp = await scratchFile("clip.mp4");
+  await fs.writeFile(tmp, Buffer.from(await res.arrayBuffer()));
+  return tmp;
 }
 
 /** Poll in-flight jobs, collect finished clips, and kick off stitching. */
 export async function advance(p: Project): Promise<void> {
   const runner = getRunner();
+  const storage = getStorage();
   for (const s of p.shots) {
     const r = s.render;
     if (!r || (r.state !== "queued" && r.state !== "running") || r.runner !== runner.name) continue;
@@ -120,10 +138,15 @@ export async function advance(p: Project): Promise<void> {
       r.progress = st.progress;
       if (st.state === "failed") {
         r.state = "failed";
-        r.error = st.error ?? "render failed";
+        r.failReason = st.reason ?? "Render failed";
+        r.error = st.error ?? r.failReason;
       } else if (st.state === "done") {
         const clip = `clip-${s.id}-${r.key}.mp4`;
-        await saveClip(await runner.getClipUrl(r.jobId), projectFile(p.id, clip));
+        const local = await downloadClip(await runner.getClipUrl(r.jobId));
+        // Copy, never move: a file:// clip belongs to the runner.
+        const copy = await scratchFile("clip.mp4");
+        await fs.copyFile(local, copy);
+        await storage.put(projectKey(p.id, clip), { path: copy }, "video/mp4");
         r.credits = await runner.getCreditsUsed(r.jobId);
         p.creditsUsed += r.credits;
         r.clip = clip;
@@ -135,6 +158,7 @@ export async function advance(p: Project): Promise<void> {
       }
     } catch (err) {
       r.state = "failed";
+      r.failReason = "Render failed";
       r.error = err instanceof Error ? err.message : String(err);
     }
   }
@@ -144,6 +168,7 @@ export async function advance(p: Project): Promise<void> {
 const g = globalThis as unknown as { __shotlistStitches?: Map<string, Promise<void>> };
 const stitching = (g.__shotlistStitches ??= new Map());
 
+/** Stitch only when every shot is current; a failed shot blocks it until fixed. */
 function maybeStitch(p: Project) {
   if (p.shots.length === 0 || !p.shots.every((s) => isFresh(p, s))) return;
   const key = stitchKey(p);
@@ -151,15 +176,19 @@ function maybeStitch(p: Project) {
   const lockKey = `${p.id}:${key}`;
   if (stitching.has(lockKey)) return;
 
-  const clips = p.shots.map((s) => projectFile(p.id, s.render!.clip!));
+  const clipKeys = p.shots.map((s) => projectKey(p.id, s.render!.clip!));
   const file = `shotlist-${p.id}-${key}.mp4`;
-  const previousFile = p.output?.state === "done" ? p.output.file : p.output?.file;
-  p.output = { key, state: "stitching", file: previousFile, startedAt: Date.now() };
+  p.output = { key, state: "stitching", file: p.output?.file, startedAt: Date.now() };
 
   const job = (async () => {
+    const storage = getStorage();
     let result: { duration?: number; error?: string };
     try {
-      result = { duration: await stitchClips(clips, projectFile(p.id, file)) };
+      const clips = await Promise.all(clipKeys.map((k) => storage.localPath(k)));
+      const out = await scratchFile("stitch.mp4");
+      const duration = await stitchClips(clips, out);
+      await storage.put(projectKey(p.id, file), { path: out }, "video/mp4");
+      result = { duration };
     } catch (err) {
       result = { error: err instanceof Error ? err.message : String(err) };
     }
@@ -171,7 +200,7 @@ function maybeStitch(p: Project) {
         return;
       }
       cur.output = { key, state: "done", file, duration: result.duration, startedAt: cur.output.startedAt, finishedAt: Date.now() };
-      if (old && old !== file) await fs.rm(projectFile(p.id, old), { force: true });
+      if (old && old !== file) await storage.delete(projectKey(p.id, old));
     });
   })().finally(() => stitching.delete(lockKey));
   stitching.set(lockKey, job);

@@ -15,7 +15,7 @@ export async function GET(_req: Request, { params }: Ctx) {
   try {
     const { id } = await params;
     const res = await withProject(id, advance);
-    return res ? NextResponse.json(toView(res.project)) : notFound();
+    return res ? NextResponse.json(await toView(res.project)) : notFound();
   } catch (err) {
     return errorResponse(err);
   }
@@ -27,7 +27,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
     const { id } = await params;
     const body = await req.json().catch(() => ({}));
     const res = await withProject(id, (p) => applyUpdate(p, body));
-    return res ? NextResponse.json(toView(res.project)) : notFound();
+    return res ? NextResponse.json(await toView(res.project)) : notFound();
   } catch (err) {
     return errorResponse(err);
   }
