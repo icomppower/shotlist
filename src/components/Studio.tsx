@@ -7,7 +7,7 @@ import {
 } from "@/lib/moves";
 import type { ProjectView } from "@/lib/types";
 import { ApiError, api, clientId, fileUrl, setComfyKey, toEditable, type EditableShot } from "@/lib/client";
-import type { Sample } from "@/lib/samples";
+import { DEMO_T2V_MOVE, DEMO_T2V_SECONDS, type Sample } from "@/lib/samples";
 import { MovePreview } from "./MovePreview";
 import { ShotEditor } from "./ShotEditor";
 import { Monitor } from "./Monitor";
@@ -112,7 +112,7 @@ export function Studio({
   }, [busy, id, view, adopt]);
 
   // ---------------------------------------------------------------- actions
-  const upload = async (file: File | { sample: string }) => {
+  const upload = async (file: File | { sample: string } | { scene: string }) => {
     setError(null);
     setBusyAction("upload");
     try {
@@ -204,7 +204,8 @@ export function Studio({
   // ---------------------------------------------------------------- derived
   const statusById = useMemo(() => new Map(view?.shotsView.map((s) => [s.id, s])), [view]);
   const serverShot = useMemo(() => new Map(view?.shots.map((s) => [s.id, s])), [view]);
-  const imageUrl = view ? fileUrl(view.id, view.image.file) : undefined;
+  // For a text-only project this is shot 1's last frame, once it exists.
+  const imageUrl = view?.image ? fileUrl(view.id, view.image.file) : undefined;
   const total = shots.reduce((t, s) => t + s.duration, 0) - 0.5 * Math.max(shots.length - 1, 0);
 
   const stale = view ? view.shotsView.filter((s) => !s.fresh && !s.inFlight).length : 0;
@@ -216,7 +217,13 @@ export function Studio({
   const needsKey =
     demoMode &&
     (!view?.sample ||
-      shots.some((s) => mode === "manual" || (mode === "director" ? planPrompt(s.move, s.note) : s.prompt) !== planPrompt(s.move, "")));
+      shots.some((s, i) =>
+        mode === "manual"
+          ? true
+          : view.scene && i === 0
+            ? s.move !== DEMO_T2V_MOVE || s.duration !== DEMO_T2V_SECONDS // shot 1 = the pre-made text-to-video shot
+            : (mode === "director" ? planPrompt(s.move, s.note) : s.prompt) !== planPrompt(s.move, ""),
+      ));
 
   // Blocked renders show the sample — but never over the user's own finished cut.
   const demo = (demoHit || !!view?.demo) && !view?.outputFresh;

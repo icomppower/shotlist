@@ -15,6 +15,9 @@ import type { JobRunner, JobStatus, ShotJobInput } from "./types";
  *   outputs       GET  /api/jobs/{prompt_id}
  *   download      GET  /api/view?filename&subfolder&type   (may 302 to a signed URL)
  *
+ * Text-only projects: shot 1 uses workflows/shotlist-t2v.json (+ .map.json),
+ * same contract minus the image; no upload happens for it.
+ *
  * Auth is the X-API-Key header: the visitor's own key (bring-your-own-key,
  * held only for the request) or COMFY_API_KEY for local RUNNER=comfy. The key
  * is never written to job records and is redacted from stored errors.
@@ -91,8 +94,8 @@ class ComfyHttpError extends Error {
 
 type Queue = { active: string[]; waiting: string[] };
 
-// Workflow files are read once per process.
-let cachedFlow: Promise<{ workflow: Workflow; map: NodeMap }> | undefined;
+// Workflow files are read once per process: shotlist.json (i2v) and shotlist-t2v.json.
+const cachedFlows = new Map<string, Promise<{ workflow: Workflow; map: NodeMap }>>();
 
 export class ComfyRunner implements JobRunner {
   readonly name = "comfy";
@@ -114,17 +117,22 @@ export class ComfyRunner implements JobRunner {
     return res;
   }
 
-  private loadWorkflow(): Promise<{ workflow: Workflow; map: NodeMap }> {
-    cachedFlow ??= (async () => ({
-      workflow: JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, "shotlist.json"), "utf8")) as Workflow,
-      map: JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, "shotlist.map.json"), "utf8")) as NodeMap,
-    }))();
-    return cachedFlow;
+  private loadWorkflow(kind: ShotJobInput["kind"]): Promise<{ workflow: Workflow; map: NodeMap }> {
+    const name = kind === "t2v" ? "shotlist-t2v" : "shotlist";
+    let flow = cachedFlows.get(name);
+    if (!flow) {
+      flow = (async () => ({
+        workflow: JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, `${name}.json`), "utf8")) as Workflow,
+        map: JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, `${name}.map.json`), "utf8")) as NodeMap,
+      }))();
+      cachedFlows.set(name, flow);
+    }
+    return flow;
   }
 
   /** Fill the mapped node inputs. The prompt goes in exactly as given. */
-  private async buildPrompt(input: ShotJobInput, imageName: string): Promise<Workflow> {
-    const { workflow, map } = await this.loadWorkflow();
+  private async buildPrompt(input: ShotJobInput, imageName: string | undefined): Promise<Workflow> {
+    const { workflow, map } = await this.loadWorkflow(input.kind);
     const graph = structuredClone(workflow);
     const cam = input.camera;
     const values: Partial<Record<Source, unknown>> = {
@@ -156,11 +164,13 @@ export class ComfyRunner implements JobRunner {
     return graph;
   }
 
-  private async uploadImage(input: ShotJobInput): Promise<string> {
+  private async uploadImage(input: ShotJobInput): Promise<string | undefined> {
+    if (input.kind === "t2v" || !input.imagePath) return undefined; // text-to-video: nothing to upload
     const bytes = await fs.readFile(input.imagePath);
     const form = new FormData();
-    const ext = input.imageMime.split("/")[1] ?? "png";
-    form.append("image", new Blob([bytes], { type: input.imageMime }), `shotlist-${input.projectId}.${ext}`);
+    const mime = input.imageMime ?? "image/png";
+    const ext = mime.split("/")[1] ?? "png";
+    form.append("image", new Blob([new Uint8Array(bytes)], { type: mime }), `shotlist-${input.projectId}.${ext}`);
     form.append("type", "input");
     form.append("overwrite", "true");
     const body = (await (await this.api("/api/upload/image", { method: "POST", body: form })).json()) as {
@@ -299,7 +309,7 @@ export class ComfyRunner implements JobRunner {
 
   /** Pick the clip from the job's outputs, preferring the mapped output node. */
   private async findOutput(job: ComfyJob): Promise<ComfyJob["output"]> {
-    const { map } = await this.loadWorkflow();
+    const { map } = await this.loadWorkflow(job.input.kind);
     const details = await this.jobDetails(job);
     const outputs = (details.outputs ?? {}) as Record<string, Record<string, unknown>>;
     const files: Array<{ filename: string; subfolder?: string; type?: string; node: string }> = [];

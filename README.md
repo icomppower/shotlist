@@ -23,7 +23,7 @@ runs on the [Comfy Developer Platform](https://docs.comfy.org) and uses
 
 | | Who pays | What renders | Set up |
 | --- | --- | --- | --- |
-| **Demo mode** (the public link) | Nobody | Pre-made real LTX clips for the bundled sample image, trimmed to each shot and stitched live | `RUNNER=demo` (the default on Vercel). No key on the server |
+| **Demo mode** (the public link) | Nobody | Pre-made real LTX clips for the bundled sample image and sample scene, trimmed to each shot and stitched live | `RUNNER=demo` (the default on Vercel). No key on the server |
 | **Bring your own key** (on the demo link) | The visitor | Anything: their own image, prompts and moves, via the `ComfyRunner` | The visitor pastes their key into **Comfy API key (renders on your credits)** |
 | **Local `RUNNER=comfy`** | You | Anything, via the `ComfyRunner` with your key | `COMFY_API_KEY` in `.env.local` on your machine |
 
@@ -34,6 +34,11 @@ them as usual. The UI shows one line: *Demo mode — real LTX renders,
 pre-made.* A replay happens only when it is exact: the sample image, a preset
 move, and the Director prompt the clip was rendered with. An upload, a custom
 prompt or Manual mode shows *Paste a Comfy key to render your own.*
+
+In demo mode, the scene box comes pre-filled with the bundled sample scene, so
+pressing Enter works right away. Shot 1 replays the pre-made text-to-video
+clip, and the other shots replay clips that were rendered from its last frame.
+That replay needs shot 1 to stay a 4s slow push-in. Any other scene needs a key.
 
 **Bring your own key.** If the visitor fills the one optional key field, their
 requests use the `ComfyRunner` with their key, billed to their credits. The key:
@@ -49,8 +54,10 @@ the key. Renders on a visitor's key don't count against `DAILY_SHOT_CAP`.
 
 ## What it does
 
-1. **Drop an image.** You get four starter shots right away (slow push-in →
-   bullet-time orbit → crash zoom → crane reveal), so Generate works immediately.
+1. **Drop an image, or describe a scene.** You get four starter shots right away
+   (slow push-in → bullet-time orbit → crash zoom → crane reveal), so Generate
+   works immediately. Type a scene into **Describe a scene** and press Enter to
+   start with no image (see *Text only* below).
 2. **Shot list.** Drag ⋮⋮ to reorder. Tap a shot to swap its move: each move is a
    card with a small looping preview played on your own image. Each shot is
    3–6 seconds long. Add up to 12 shots, or remove them.
@@ -66,6 +73,23 @@ the key. Renders on a visitor's key don't count against `DAILY_SHOT_CAP`.
 
 Director moves: **crash zoom, dolly zoom, bullet-time orbit, FPV drone dive,
 crane reveal, whip pan, slow push-in.**
+
+### Text only (no image)
+
+With a scene and no image:
+
+1. **Shot 1 renders text-to-video** using `workflows/shotlist-t2v.json`. The
+   scene text is its prompt, sent exactly as typed: the Direct-mode rule, so
+   nothing is rewritten or added. It also goes to the server as JSON, because
+   multipart encoding would change its line breaks.
+2. **Shot 1's last frame becomes the source still.** It is extracted with
+   ffmpeg-static and shown on the monitor where an uploaded image would be.
+3. **Shots 2+ render image-to-video from that frame,** using the existing
+   workflow. They are submitted automatically once the frame exists.
+
+Changing shot 1 changes the frame, so every later shot re-renders to match it.
+Changing any other shot re-renders only that shot. If you upload an image, all
+of this is skipped and the app behaves exactly as before.
 
 ### Modes: Director | Direct | Manual
 
@@ -114,11 +138,26 @@ data directory, `MOCK_FAIL_SHOT=2` and `DAILY_SHOT_CAP=10`. It then checks that:
 - Direct mode sends the prompt byte-for-byte
 - going over the daily cap shows the demo state
 
-A second pass restarts the server with `RUNNER=demo` and no server key. It
+A text-only pass then checks that:
+
+- a scene project starts with shot 1 alone, as text-to-video with no image
+- the scene arrives verbatim, including odd spacing, unicode and a newline
+- shot 1's last frame becomes the served source still, and shots 2+ render
+  image-to-video from it
+- the cut stitches to 14.5s
+- changing shot 3 re-renders only shot 3
+- changing shot 1 re-renders everything from a new frame
+- an uploaded image still uses image-to-video for every shot
+
+A final pass restarts the server with `RUNNER=demo` and no server key. It
 checks that:
 
 - the sample image replays the pre-made clips into a 14.5s cut
-- an upload or a custom prompt asks for a key
+- the sample scene replays its text-to-video shot 1, then the clips made from
+  its frame
+- an upload, a custom prompt or any other scene asks for a key
+- bring-your-own-key text-only sends the scene to the text-to-video workflow,
+  then sends shots 2+ to the image-to-video workflow
 - bring-your-own-key renders through the `ComfyRunner` against a local stub of
   the Comfy API, so no real network calls are made
 - prompts arrive byte-for-byte and credits are read from `X-Comfy-Credits-Used`
@@ -131,6 +170,8 @@ checks that:
 
 - animates the uploaded still with the chosen move, using ffmpeg zoom, pan,
   rotate and motion-blur filters (`src/lib/server/motion.ts`)
+- for text-to-video, first paints a gradient still seeded from the scene text,
+  then animates it the same way
 - waits a random 3–8s and reports progress over that time, so the UI behaves
   like a real queue
 - reports made-up credits (2 per second of video) so the credits counter has
@@ -151,6 +192,8 @@ back as *Refused by LTX*, so you can try the failure and retry path.
    LTX 2.5 checkpoint and text encoder, and check that one render works. Then use
    *Export (API)* to save it over `workflows/shotlist.json`. If the node ids
    changed, update `workflows/shotlist.map.json` (see `workflows/README.md`).
+   Do the same for `workflows/shotlist-t2v.json`, the text-to-video graph used
+   for shot 1 of a text-only project.
 3. **Configure and run:**
 
    ```bash
@@ -182,13 +225,22 @@ sample instead of trying to render.
 ### Render the demo clips (on your machine)
 
 ```bash
-npm run demo:clips -- --only=slow_push_in   # one shot first: check its credit cost
-npm run demo:clips                          # all 7 moves, then the sample trailer
+npm run demo:clips -- --sample=dusk-ridge --only=slow_push_in   # one shot first: check its credit cost
+npm run demo:clips                                              # everything, then the sample trailer
 ```
 
 This uses `COMFY_API_KEY` from `.env.local` and starts the app with
 `RUNNER=comfy`. For each sample image it renders one 6s Director-mode shot per
-move, using the same prompt that demo mode replays. The clips go to
+move, using the same prompt that demo mode replays.
+
+For the sample scene (`harbor-light`), the script runs the text-only path:
+
+- `t2v.mp4` is shot 1, a 4s slow push-in rendered text-to-video
+- `frame.jpg` is that clip's last frame
+- one clip per move is rendered from that frame
+
+Each scene run renders shot 1 again, which changes the frame, so it keeps
+only the moves rendered in that same run. The clips go to
 `public/demo/<sample>/<move>.mp4`, and the credits for each clip and the total
 are printed. Each clip is recorded in `public/demo/<sample>/clips.json`.
 
@@ -251,7 +303,7 @@ src/
       stitch.ts             xfade chain (0.5s crossfades)
       motion.ts             mock camera moves as ffmpeg filter graphs
       ffmpeg.ts             ffmpeg-static wrapper
-workflows/                  shotlist.json (API-format LTX graph) + shotlist.map.json (node mapping)
+workflows/                  shotlist.json + .map.json (image-to-video), shotlist-t2v.json + .map.json (text-to-video, shot 1 of a text-only project)
 public/demo/<sample>/       sample image + one pre-made clip per move (placeholders until demo:clips)
 public/sample-trailer.mp4   demo-state sample (placeholder)
 scripts/                    e2e-mock.mjs (tests), make-demo-clips.mjs (real LTX demo clips)
@@ -315,6 +367,7 @@ JSON and the demo clips are traced into the serverless functions. For a hosted d
 - [x] Polish: shot failures with Edit & retry, storage drivers, daily cap and demo sample
 - [x] Demo mode (pre-made clips, no server key) and bring-your-own-key
 - [ ] 4. Verify the `ComfyRunner` and `workflows/shotlist.json` with real LTX 2.5 renders (written, untested)
+- [x] Text only: describe a scene; shot 1 renders text-to-video, and its last frame drives shots 2+
 - [ ] Render the real demo clips and sample trailer with `npm run demo:clips`
 
 ## License

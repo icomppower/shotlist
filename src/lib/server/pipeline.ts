@@ -5,7 +5,7 @@ import { after } from "next/server";
 import { CROSSFADE_SECONDS, planPrompt, type CameraParams } from "../moves";
 import type { Project, ProjectView, Shot } from "../types";
 import { redact, runnerFor, runnerMode, type RunContext } from "../runners";
-import { VIDEO } from "./ffmpeg";
+import { VIDEO, extractLastFrame } from "./ffmpeg";
 import { DemoLimitError, demoReason, reserveShots } from "./limits";
 import { HttpError } from "./projects";
 import { stitchClips } from "./stitch";
@@ -15,10 +15,18 @@ import { getStorage, hash, projectKey, scratchFile, withProject } from "./storag
  * Orchestration is poll-driven: every GET of a project advances its jobs
  * (status -> fetch clip -> stitch). No long-lived worker is needed, which is
  * what the Comfy runner on serverless wants too.
+ *
+ * Text-only projects (a scene, no image): shot 1 is text-to-video with the
+ * scene as its prompt, verbatim. When it finishes, its last frame becomes the
+ * project's image and shots 2+ are submitted as image-to-video from it.
  */
 
+/** Shot 1 of a text-only project renders text-to-video. */
+export const isT2V = (p: Project, index: number) => !!p.scene && index === 0;
+
 /** The exact prompt a shot sends in the project's current mode. */
-export function resolvePrompt(p: Project, s: Shot): string {
+export function resolvePrompt(p: Project, s: Shot, index: number): string {
+  if (isT2V(p, index)) return p.scene!; // the scene text as typed, never rewritten
   return p.mode === "director" ? planPrompt(s.move, s.note) : s.prompt;
 }
 
@@ -31,17 +39,28 @@ export function resolveCamera(p: Project, s: Shot): CameraParams {
  * and camera re-renders nothing. Not keyed on the runner: a shared link shows
  * the same cut whether or not the viewer has a key.
  */
-export function renderKey(p: Project, s: Shot): string {
-  return hash(JSON.stringify([p.image.file, resolveCamera(p, s), s.duration, resolvePrompt(p, s), s.take]));
+export function renderKey(p: Project, s: Shot, index: number): string {
+  // A t2v shot has no image; every other shot depends on the reference still,
+  // which for a text-only project is shot 1's last frame (named by its render key).
+  const source = isT2V(p, index) ? ["t2v"] : [p.image?.file ?? "-"];
+  return hash(JSON.stringify([...source, resolveCamera(p, s), s.duration, resolvePrompt(p, s, index), s.take]));
 }
 
-function isFresh(p: Project, s: Shot): boolean {
-  return s.render?.state === "done" && s.render.key === renderKey(p, s) && !!s.render.clip;
+/** The reference still exists and (text-only) matches shot 1's current render. */
+function frameReady(p: Project): boolean {
+  if (!p.scene) return !!p.image;
+  const s0 = p.shots[0];
+  return !!s0 && !!p.image && isFresh(p, s0, 0) && p.frameOf === s0.render!.key;
 }
 
-function isInFlight(p: Project, s: Shot): boolean {
+function isFresh(p: Project, s: Shot, index: number): boolean {
+  const done = s.render?.state === "done" && s.render.key === renderKey(p, s, index) && !!s.render.clip;
+  return done && (index === 0 || !p.scene || frameReady(p));
+}
+
+function isInFlight(p: Project, s: Shot, index: number): boolean {
   const r = s.render;
-  return !!r && (r.state === "queued" || r.state === "running") && r.key === renderKey(p, s);
+  return !!r && (r.state === "queued" || r.state === "running") && r.key === renderKey(p, s, index);
 }
 
 export function stitchKey(p: Project): string {
@@ -49,11 +68,11 @@ export function stitchKey(p: Project): string {
 }
 
 export async function toView(p: Project, ctx: RunContext): Promise<ProjectView> {
-  const shotsView = p.shots.map((s) => ({
+  const shotsView = p.shots.map((s, i) => ({
     id: s.id,
-    fresh: isFresh(p, s),
-    inFlight: isInFlight(p, s),
-    prompt: resolvePrompt(p, s),
+    fresh: isFresh(p, s, i),
+    inFlight: isInFlight(p, s, i),
+    prompt: resolvePrompt(p, s, i),
   }));
   const allFresh = p.shots.length > 0 && shotsView.every((v) => v.fresh);
   const total = p.shots.reduce((t, s) => t + s.duration, 0) - CROSSFADE_SECONDS * Math.max(p.shots.length - 1, 0);
@@ -70,7 +89,8 @@ export async function toView(p: Project, ctx: RunContext): Promise<ProjectView> 
 /**
  * Submit every shot whose current settings have no done/in-flight render
  * (failed shots count as out of date). `force` ids get a new take even if up
- * to date; `only`, when given, limits submission to those ids.
+ * to date; `only`, when given, limits submission to those ids. In a text-only
+ * project, shots 2+ wait for shot 1's frame; advance() submits them then.
  * Throws DemoLimitError if the renders would exceed the daily cap.
  */
 export async function submitStale(
@@ -83,19 +103,22 @@ export async function submitStale(
   const todo = p.shots
     .map((s, index) => ({ s, index }))
     .filter(({ s }) => !opts.only || opts.only.includes(s.id))
-    .filter(({ s }) => {
+    .filter(({ s, index }) => {
       const r = s.render;
       if (force.includes(s.id)) return true;
-      return !(r && r.key === renderKey(p, s) && r.state !== "failed");
-    });
+      return !(r && r.key === renderKey(p, s, index) && r.state !== "failed");
+    })
+    // Image-to-video needs the reference still; for text-only projects that is shot 1's last frame.
+    .filter(({ index }) => isT2V(p, index) || frameReady(p));
   if (todo.length === 0) return [];
 
   const why = await demoReason(ctx);
   if (why === "no-key") throw new DemoLimitError(why);
 
-  const imagePath = await getStorage().localPath(projectKey(p.id, p.image.file));
+  const imagePath = p.image ? await getStorage().localPath(projectKey(p.id, p.image.file)) : undefined;
   const inputFor = (s: Shot, index: number) => {
-    const key = renderKey(p, s);
+    const key = renderKey(p, s, index);
+    const t2v = isT2V(p, index);
     return {
       key,
       input: {
@@ -104,10 +127,11 @@ export async function submitStale(
         shotIndex: index,
         attempt: s.renderCount + 1,
         sampleId: p.sample,
-        imagePath,
-        imageMime: p.image.mime,
+        kind: t2v ? ("t2v" as const) : ("i2v" as const),
+        imagePath: t2v ? undefined : imagePath,
+        imageMime: t2v ? undefined : p.image?.mime,
         mode: p.mode,
-        prompt: resolvePrompt(p, s),
+        prompt: resolvePrompt(p, s, index),
         camera: resolveCamera(p, s),
         durationSec: s.duration,
         width: VIDEO.width,
@@ -185,7 +209,42 @@ export async function advance(p: Project, ctx: RunContext): Promise<void> {
       r.error = redact(err instanceof Error ? err.message : String(err), ctx.userKey);
     }
   }
+  await continueFromFrame(p, ctx);
   maybeStitch(p);
+}
+
+/**
+ * Text-only project: once shot 1 is done, take its last frame as the
+ * reference still, then submit shots 2+ against it. If they can't be
+ * submitted (demo replay limits, daily cap), they show as failed with why.
+ */
+async function continueFromFrame(p: Project, ctx: RunContext) {
+  const s0 = p.shots[0];
+  if (!p.scene || !s0 || !isFresh(p, s0, 0) || p.frameOf === s0.render!.key) return;
+  const storage = getStorage();
+  const file = `frame-${s0.render!.key}.jpg`;
+  try {
+    const out = await scratchFile("frame.jpg");
+    await extractLastFrame(await storage.localPath(projectKey(p.id, s0.render!.clip!)), out);
+    await storage.put(projectKey(p.id, file), { path: out }, "image/jpeg");
+  } catch (err) {
+    s0.render = { ...s0.render!, state: "failed", failReason: "Render failed", error: `frame extraction: ${String(err)}` };
+    return;
+  }
+  p.image = { file, name: "Shot 1 last frame", mime: "image/jpeg" };
+  p.frameOf = s0.render!.key;
+  try {
+    await submitStale(p, ctx);
+  } catch (err) {
+    const reason = err instanceof DemoLimitError ? "Daily render limit reached" : err instanceof Error ? err.message : "Render failed";
+    p.shots.forEach((s, i) => {
+      if (i === 0 || isFresh(p, s, i) || isInFlight(p, s, i)) return;
+      s.render = {
+        jobId: "", runner: ctx.runner.name, key: renderKey(p, s, i), mode: p.mode, sentPrompt: resolvePrompt(p, s, i),
+        state: "failed", progress: 0, failReason: reason, error: redact(String(err), ctx.userKey), submittedAt: Date.now(),
+      };
+    });
+  }
 }
 
 const g = globalThis as unknown as { __shotlistStitches?: Map<string, Promise<void>> };
@@ -193,7 +252,7 @@ const stitching = (g.__shotlistStitches ??= new Map());
 
 /** Stitch only when every shot is current; a failed shot blocks it until fixed. */
 function maybeStitch(p: Project) {
-  if (p.shots.length === 0 || !p.shots.every((s) => isFresh(p, s))) return;
+  if (p.shots.length === 0 || !p.shots.every((s, i) => isFresh(p, s, i))) return;
   const key = stitchKey(p);
   if (p.output?.key === key && p.output.state !== "stitching") return; // done or failed for this cut
   const lockKey = `${p.id}:${key}`;

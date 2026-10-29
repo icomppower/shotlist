@@ -10,9 +10,14 @@ export interface ShotJobInput {
   attempt: number;
   /** Set when the project uses a bundled sample image (demo mode). */
   sampleId?: string;
-  /** Absolute path of the uploaded source image on this server. */
-  imagePath: string;
-  imageMime: string;
+  /**
+   * "t2v": shot 1 of a text-only project, rendered from the prompt alone.
+   * "i2v": image-to-video from `imagePath` (an upload, or shot 1's last frame).
+   */
+  kind: "i2v" | "t2v";
+  /** Absolute path of the reference image on this server (i2v only). */
+  imagePath?: string;
+  imageMime?: string;
   mode: Mode;
   /**
    * The prompt to send, final and exact. Runners MUST pass it through

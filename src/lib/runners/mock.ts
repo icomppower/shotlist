@@ -11,6 +11,9 @@ import type { JobRunner, JobStatus, ShotJobInput } from "./types";
  * still with the chosen move (ffmpeg zoom/pan/rotate) and pretends the job
  * takes 3–8 s so the per-shot progress UI behaves like a real queue.
  *
+ * Text-to-video (shot 1 of a text-only project) first paints a still whose
+ * colours are seeded from the prompt, then animates it the same way.
+ *
  * MOCK_FAIL_SHOT=<n> makes the first render of shot n (1-based) come back as
  * a refusal, so the failure → "Edit & retry" path can be exercised.
  */
@@ -55,15 +58,28 @@ function simulatedRefusal(input: ShotJobInput): boolean {
   return Number.isInteger(n) && n === input.shotIndex + 1 && input.attempt === 1;
 }
 
+/** Mock "text-to-video": a deterministic gradient still seeded from the prompt text. */
+async function paintStill(prompt: string): Promise<string> {
+  let seed = 0;
+  for (const ch of prompt) seed = (seed * 31 + ch.codePointAt(0)!) >>> 0;
+  const out = await scratchFile("t2v.png");
+  await runFfmpeg([
+    "-f", "lavfi", "-i", `gradients=s=1920x1080:n=4:type=radial:speed=0.01:seed=${seed % 2147483647}:d=1`,
+    "-frames:v", "1", out,
+  ]);
+  return out;
+}
+
 function startRender(job: MockJob) {
   if (inflight.has(job.id)) return;
   const { input } = job;
   const p = (async () => {
     try {
       const out = await scratchFile("mock.mp4");
+      const still = input.kind === "t2v" || !input.imagePath ? await paintStill(input.prompt) : input.imagePath;
       await runFfmpeg([
         "-loop", "1", "-framerate", String(input.fps), "-t", String(input.durationSec),
-        "-i", input.imagePath,
+        "-i", still,
         "-filter_complex", buildMotionFilter(input.camera, input.durationSec),
         "-map", "[v]", "-frames:v", String(Math.round(input.durationSec * input.fps)),
         ...ENCODE_ARGS, out,

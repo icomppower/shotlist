@@ -5,12 +5,18 @@
 //   2. npm run demo:clips -- --only=slow_push_in   # one shot first: check what it costs
 //   3. npm run demo:clips                          # every move for every sample, then the trailer
 //
-// For each sample image in src/lib/samples.ts this starts the app with
-// RUNNER=comfy, renders one 6 s Director-mode shot per move (prompt =
-// planPrompt(move, ""), exactly what demo mode replays), and saves them to
-// public/demo/<sample>/<move>.mp4, printing the credits each one used. Once every move
-// is a real render, it rebuilds public/sample-trailer.mp4 from the starter
-// 4-shot list using those clips (RUNNER=demo, so that step costs nothing).
+// For each sample in src/lib/samples.ts this starts the app with RUNNER=comfy,
+// renders one 6 s Director-mode shot per move (prompt = planPrompt(move, ""),
+// exactly what demo mode replays), and saves them to
+// public/demo/<sample>/<move>.mp4, printing the credits each one used.
+// For the sample scene (text only), the app's own text path runs: shot 1 is
+// text-to-video of the scene (slow push-in, 4 s) saved as t2v.mp4, its last
+// frame is saved as frame.jpg, and the per-move clips are rendered from that
+// frame. (Re-rendering shot 1 changes the frame, so a scene run always redoes
+// shot 1 and only keeps the moves rendered in that same run.)
+// Once every move of the image sample is a real render, it rebuilds
+// public/sample-trailer.mp4 from the starter 4-shot list using those clips
+// (RUNNER=demo, so that step costs nothing).
 //
 // Flags: --only=<move>[,<move>]  render just these moves
 //        --sample=<id>           just this sample
@@ -21,8 +27,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 const MOVES = ["crash_zoom", "dolly_zoom", "bullet_orbit", "fpv_dive", "crane_reveal", "whip_pan", "slow_push_in"];
-const SAMPLES = ["dusk-ridge"]; // keep in sync with src/lib/samples.ts
+// Keep in sync with src/lib/samples.ts.
+const SCENES = {
+  "harbor-light": "A lone lighthouse on a rocky cliff at dusk, waves breaking below, a warm light turning in the lamp room.",
+};
+const SAMPLES = ["dusk-ridge", ...Object.keys(SCENES)];
 const CLIP_SECONDS = 6; // DEMO_CLIP_SECONDS
+const T2V_MOVE = "slow_push_in"; // DEMO_T2V_MOVE
+const T2V_SECONDS = 4; // DEMO_T2V_SECONDS
 const PORT = Number(process.env.DEMO_CLIPS_PORT ?? 3299);
 const BASE = `http://localhost:${PORT}`;
 let server;
@@ -124,28 +136,37 @@ if (!args["trailer-only"]) {
   await startServer({ RUNNER: "comfy" });
   const moves = only ?? MOVES;
   for (const sample of samples) {
-    console.log(`\n▶ ${sample}: rendering ${moves.length} move(s) at ${CLIP_SECONDS}s with LTX on Comfy`);
-    let p = await newSampleProject(sample);
+    const scene = SCENES[sample];
+    console.log(`\n▶ ${sample}: rendering ${scene ? "text-to-video shot 1 + " : ""}${moves.length} move(s) at ${CLIP_SECONDS}s with LTX on Comfy`);
+    let p = scene ? await call("POST", "/api/projects", { scene }) : await newSampleProject(sample);
     const template = p.shots[0];
-    const shots = moves.map((move) => ({ ...template, id: undefined, move, duration: CLIP_SECONDS, note: "" }));
+    const shot = (move, duration) => ({ ...template, id: undefined, move, duration, note: "" });
+    const shots = [...(scene ? [shot(T2V_MOVE, T2V_SECONDS)] : []), ...moves.map((m) => shot(m, CLIP_SECONDS))];
     p = await call("PATCH", `/api/projects/${p.id}`, { mode: "director", shots });
     await call("POST", `/api/projects/${p.id}/generate`, {});
     p = await settle(p.id);
 
     const meta = readMeta(sample);
+    const dir = path.join("public/demo", sample);
+    if (scene) meta.moves = {}; // a new shot 1 means a new frame: older per-move clips no longer match
     let total = 0;
-    for (const s of p.shots) {
+    for (const [i, s] of p.shots.entries()) {
       const r = s.render;
+      const name = scene && i === 0 ? "t2v" : s.move;
       if (r?.state !== "done") {
-        console.log(`  ✗ ${s.move}: ${r?.failReason ?? "not rendered"} — ${r?.error ?? ""}`);
+        console.log(`  ✗ ${name}: ${r?.failReason ?? "not rendered"} — ${r?.error ?? ""}`);
         continue;
       }
-      await download(p.id, r.clip, path.join("public/demo", sample, `${s.move}.mp4`));
-      meta.moves[s.move] = { source: "ltx", credits: r.credits ?? 0, prompt: r.sentPrompt, renderedAt: new Date().toISOString() };
+      await download(p.id, r.clip, path.join(dir, `${name}.mp4`));
+      const entry = { source: "ltx", credits: r.credits ?? 0, prompt: r.sentPrompt, renderedAt: new Date().toISOString() };
+      if (scene && i === 0) meta.t2v = entry;
+      else meta.moves[s.move] = entry;
       total += r.credits ?? 0;
-      console.log(`  ✓ ${s.move.padEnd(13)} ${String(r.credits ?? 0).padStart(6)} credits   "${r.sentPrompt}"`);
+      console.log(`  ✓ ${name.padEnd(13)} ${String(r.credits ?? 0).padStart(6)} credits   "${r.sentPrompt}"`);
     }
-    meta.source = MOVES.every((m) => meta.moves[m]?.source === "ltx") ? "ltx" : "partial";
+    if (scene && p.image) await download(p.id, p.image.file, path.join(dir, "frame.jpg"));
+    const allMoves = MOVES.every((m) => meta.moves[m]?.source === "ltx");
+    meta.source = allMoves && (!scene || meta.t2v?.source === "ltx") ? "ltx" : "partial";
     delete meta.note;
     writeFileSync(metaPath(sample), JSON.stringify(meta, null, 2) + "\n");
     grandTotal += total;
@@ -156,9 +177,11 @@ if (!args["trailer-only"]) {
 }
 
 // ---------------------------------------------------------------- sample trailer
-const trailerSample = samples[0];
+const trailerSample = "dusk-ridge"; // the image sample
 const meta = readMeta(trailerSample);
-if (!args["trailer-only"] && meta.source !== "ltx") {
+if (!samples.includes(trailerSample)) {
+  console.log(`\nTrailer not rebuilt (it comes from ${trailerSample}).`);
+} else if (!args["trailer-only"] && meta.source !== "ltx") {
   console.log(`\nTrailer not rebuilt: ${trailerSample} still has placeholder moves. Render the rest to finish.`);
 } else {
   console.log(`\n▶ sample-trailer.mp4 from the starter 4-shot list (${trailerSample}, pre-made clips, 0 credits)`);

@@ -6,7 +6,7 @@ import {
 import type { Project, Shot } from "../types";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { findSample } from "../samples";
+import { findSample, findSceneSample } from "../samples";
 import { getStorage, newId, projectKey, writeProject } from "./storage";
 
 /** First-run sequence: Generate works the moment an image is dropped. */
@@ -31,20 +31,32 @@ export function newShot(move: MoveId = "slow_push_in"): Shot {
   };
 }
 
-/** Start a project from an upload, or from a bundled sample image (`sampleId`). */
-export async function createProject(source: File | { sampleId: string }): Promise<Project> {
+export const MAX_SCENE_CHARS = 2000;
+
+/**
+ * Start a project from an upload, a bundled sample image (`sampleId`), or a
+ * scene description (`scene`, text only: shot 1 becomes text-to-video).
+ * The scene text is stored exactly as typed.
+ */
+export async function createProject(source: File | { sampleId: string } | { scene: string }): Promise<Project> {
   const id = newId(6);
   let image: Project["image"];
   let sample: string | undefined;
+  let scene: string | undefined;
   if (source instanceof File) {
     const ext = IMAGE_TYPES[source.type];
     if (!ext) throw new HttpError(415, "Upload a JPEG, PNG or WebP image.");
     if (source.size > MAX_IMAGE_BYTES) throw new HttpError(413, "Image is larger than 20 MB.");
     image = { file: `source.${ext}`, name: source.name.slice(0, 200) || "image", mime: source.type };
     await getStorage().put(projectKey(id, image.file), Buffer.from(await source.arrayBuffer()), source.type);
+  } else if ("scene" in source) {
+    if (!source.scene.trim()) throw new HttpError(400, "Describe a scene.");
+    if (source.scene.length > MAX_SCENE_CHARS) throw new HttpError(413, "Scene description is too long.");
+    scene = source.scene;
+    sample = findSceneSample(scene)?.id; // the bundled sample scene can be replayed in demo mode
   } else {
     const found = findSample(source.sampleId);
-    if (!found) throw new HttpError(404, "Unknown sample.");
+    if (!found?.image) throw new HttpError(404, "Unknown sample.");
     const ext = path.extname(found.image).slice(1);
     const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
     image = { file: `source.${ext}`, name: found.label, mime };
@@ -59,6 +71,7 @@ export async function createProject(source: File | { sampleId: string }): Promis
     updatedAt: now,
     mode: "director",
     image,
+    scene,
     sample,
     shots: STARTER_MOVES.map(newShot),
     creditsUsed: 0,

@@ -48,6 +48,12 @@ export async function probeDuration(file: string): Promise<number> {
   return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
 }
 
+/** Write the last frame of a video as a JPEG (the reference still for shots 2+). */
+export async function extractLastFrame(video: string, outJpg: string): Promise<void> {
+  // -update 1 keeps overwriting one image, so what is left is the final frame.
+  await runFfmpeg(["-sseof", "-0.5", "-i", video, "-update", "1", "-q:v", "2", outJpg]);
+}
+
 /** Shared encode settings so every clip can be xfaded without re-timing. */
 export const VIDEO = { width: 1280, height: 720, fps: 24 } as const;
 export const ENCODE_ARGS = [

@@ -1,0 +1,13 @@
+{
+  "_comment": "Text-to-video (shot 1 of a text-only project). Same contract as shotlist.map.json, but there is no image: 'prompt' is the scene text, verbatim.",
+  "inputs": [
+    { "from": "prompt", "node": "3", "input": "text" },
+    { "from": "frames", "node": "6", "input": "length" },
+    { "from": "width", "node": "6", "input": "width" },
+    { "from": "height", "node": "6", "input": "height" },
+    { "from": "fps", "node": "7", "input": "frame_rate" },
+    { "from": "fps", "node": "10", "input": "fps" },
+    { "from": "seed", "node": "8", "input": "seed" }
+  ],
+  "output": { "node": "11" }
+}

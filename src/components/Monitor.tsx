@@ -28,11 +28,13 @@ export function Monitor({
   /** Demo mode: bundled sample images the visitor can start from. */
   samples: Sample[];
   uploading: boolean;
-  onUpload: (f: File | { sample: string }) => void;
+  onUpload: (f: File | { sample: string } | { scene: string }) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Demo mode pre-fills the bundled sample scene so Enter works right away.
+  const [scene, setScene] = useState(() => samples.find((s) => s.scene)?.scene ?? "");
 
   const pick = (files: FileList | null) => {
     const f = files?.[0];
@@ -68,7 +70,19 @@ export function Monitor({
           <strong>{uploading ? "Uploading…" : "Drop an image"}</strong>
           <span className="muted">or click to choose · JPEG, PNG, WebP</span>
         </button>
-        {samples.map((s) => (
+        <input
+          className="scene-field"
+          placeholder="Describe a scene"
+          aria-label="Describe a scene"
+          value={scene}
+          disabled={uploading}
+          onChange={(e) => setScene(e.target.value)}
+          onKeyDown={(e) => {
+            // Sent exactly as typed: no trimming or rewriting.
+            if (e.key === "Enter" && scene.trim()) onUpload({ scene });
+          }}
+        />
+        {samples.filter((s) => s.image).map((s) => (
           <button key={s.id} className="sample-pick" onClick={() => onUpload({ sample: s.id })} disabled={uploading}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={s.image} alt="" />
@@ -108,13 +122,13 @@ export function Monitor({
           <video key="sample" src="/sample-trailer.mp4" controls playsInline autoPlay muted loop />
         ) : video ? (
           <video key={video} src={video} controls playsInline autoPlay muted loop poster={imageUrl} />
-        ) : (
+        ) : imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={imageUrl} alt="Uploaded source still" />
-        )}
+          <img src={imageUrl} alt="Source still" />
+        ) : null}
         {demo && <span className="screen-tag">Demo limit reached — here’s a sample</span>}
         {!demo && updating && <span className="screen-tag">Updating…</span>}
-        {!demo && !video && !busy && <span className="screen-tag subtle">Source still</span>}
+        {!demo && !video && !busy && imageUrl && <span className="screen-tag subtle">Source still</span>}
       </div>
 
       {(busy || stitching || anyFailed) && (

@@ -8,6 +8,6 @@ export const dynamic = "force-dynamic";
 
 export default async function Home() {
   const mode = runnerMode();
-  const real = await demoClipsAreReal(SAMPLES[0].id);
+  const real = (await Promise.all(SAMPLES.map((s) => demoClipsAreReal(s.id)))).every(Boolean);
   return <Studio mode={mode} samples={mode === "demo" ? SAMPLES : []} demoReal={real} />;
 }

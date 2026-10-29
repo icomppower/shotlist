@@ -4,7 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { after } from "next/server";
 import { planPrompt } from "../moves";
-import { findSample } from "../samples";
+import { DEMO_T2V_MOVE, DEMO_T2V_SECONDS, findSample } from "../samples";
 import { ENCODE_ARGS, runFfmpeg } from "../server/ffmpeg";
 import { getStorage, newId, scratchFile } from "../server/storage";
 import type { JobRunner, JobStatus, ShotJobInput } from "./types";
@@ -13,7 +13,9 @@ import type { JobRunner, JobStatus, ShotJobInput } from "./types";
  * DemoRunner (RUNNER=demo, the live link): no API key on the server. For a
  * bundled sample image it replays the pre-made LTX clip for the shot's move
  * (public/demo/<sample>/<move>.mp4), trimmed to the shot's length, after a
- * short fake delay. Anything else needs the visitor's own Comfy key.
+ * short fake delay. For the bundled sample scene (text only), shot 1 replays
+ * public/demo/<sample>/t2v.mp4 and shots 2+ the clips rendered from its last
+ * frame. Anything else needs the visitor's own Comfy key.
  */
 
 export const NEEDS_KEY = "Paste a Comfy key to render your own.";
@@ -33,8 +35,8 @@ const inflight = (g.__shotlistDemoRenders ??= new Map());
 const jobKey = (id: string) => `demo-jobs/${id}.json`;
 const clipKey = (id: string) => `demo-jobs/${id}.mp4`;
 
-export function demoClipPath(sampleId: string, move: string): string {
-  return path.join(DEMO_DIR, sampleId, `${move}.mp4`);
+export function demoClipPath(sampleId: string, move: string, kind: ShotJobInput["kind"] = "i2v"): string {
+  return path.join(DEMO_DIR, sampleId, kind === "t2v" ? "t2v.mp4" : `${move}.mp4`);
 }
 
 /** Pre-made clips are "real" once make-demo-clips has replaced the placeholders. */
@@ -62,7 +64,7 @@ function startTrim(job: DemoJob) {
       if (input.camera.kind !== "preset" || !input.sampleId) throw new Error(NEEDS_KEY);
       const out = await scratchFile("demo.mp4");
       await runFfmpeg([
-        "-i", demoClipPath(input.sampleId, input.camera.move),
+        "-i", demoClipPath(input.sampleId, input.camera.move, input.kind),
         "-t", String(input.durationSec),
         "-vf", `fps=${input.fps},scale=${input.width}:${input.height}:force_original_aspect_ratio=increase,crop=${input.width}:${input.height},setsar=1`,
         ...ENCODE_ARGS, out,
@@ -88,8 +90,14 @@ export class DemoRunner implements JobRunner {
 
   /** Only exact replays: a sample image, a preset move, and the prompt the clip was rendered with. */
   check(input: ShotJobInput): string | null {
-    if (!input.sampleId || !findSample(input.sampleId)) return NEEDS_KEY;
-    if (input.camera.kind !== "preset") return NEEDS_KEY;
+    const sample = input.sampleId ? findSample(input.sampleId) : undefined;
+    if (!sample || input.camera.kind !== "preset") return NEEDS_KEY;
+    if (input.kind === "t2v") {
+      // Shot 1 of the sample scene: exactly the pre-made text-to-video shot.
+      const exact =
+        input.prompt === sample.scene && input.camera.move === DEMO_T2V_MOVE && input.durationSec === DEMO_T2V_SECONDS;
+      return exact ? null : NEEDS_KEY;
+    }
     if (input.prompt !== planPrompt(input.camera.move, "")) return NEEDS_KEY;
     return null;
   }

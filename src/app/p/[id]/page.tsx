@@ -9,6 +9,6 @@ export const dynamic = "force-dynamic";
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const mode = runnerMode();
-  const real = await demoClipsAreReal(SAMPLES[0].id);
+  const real = (await Promise.all(SAMPLES.map((s) => demoClipsAreReal(s.id)))).every(Boolean);
   return <Studio projectId={id} mode={mode} samples={mode === "demo" ? SAMPLES : []} demoReal={real} />;
 }

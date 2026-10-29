@@ -23,7 +23,15 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const api = {
-  create(source: File | { sample: string }) {
+  create(source: File | { sample: string } | { scene: string }) {
+    if (!(source instanceof File) && "scene" in source) {
+      // JSON, not multipart: keeps the scene text byte-for-byte.
+      return fetch("/api/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...keyHeader() },
+        body: JSON.stringify({ scene: source.scene }),
+      }).then((r) => json<ProjectView>(r));
+    }
     const form = new FormData();
     if (source instanceof File) form.append("image", source);
     else form.append("sample", source.sample);

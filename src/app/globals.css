@@ -287,3 +287,8 @@ a { color: inherit; }
 }
 .sample-pick img { width: 96px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 7px; }
 .sample-pick:hover:not(:disabled) { border-color: var(--accent); }
+.scene-field {
+  width: 100%; margin-top: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 13px 14px; font-size: 1rem;
+}
+.scene-field:focus { border-color: var(--accent); outline: none; }

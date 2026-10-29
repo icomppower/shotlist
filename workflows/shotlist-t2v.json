@@ -1,0 +1,58 @@
+{
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": { "title": "LTX 2.5 checkpoint (pick yours in ComfyUI, then re-export)" },
+    "inputs": { "ckpt_name": "REPLACE_WITH_LTX_2.5_CHECKPOINT.safetensors" }
+  },
+  "2": {
+    "class_type": "CLIPLoader",
+    "_meta": { "title": "Text encoder" },
+    "inputs": { "clip_name": "REPLACE_WITH_LTX_TEXT_ENCODER.safetensors", "type": "ltxv" }
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "_meta": { "title": "Prompt: the scene text (filled by Shotlist, byte-for-byte)" },
+    "inputs": { "text": "", "clip": ["2", 0] }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "_meta": { "title": "Negative (left empty: no added words)" },
+    "inputs": { "text": "", "clip": ["2", 0] }
+  },
+  "6": {
+    "class_type": "EmptyLTXVLatentVideo",
+    "inputs": { "width": 1280, "height": 720, "length": 97, "batch_size": 1 }
+  },
+  "7": {
+    "class_type": "LTXVConditioning",
+    "inputs": { "positive": ["3", 0], "negative": ["4", 0], "frame_rate": 24 }
+  },
+  "8": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["1", 0],
+      "seed": 0,
+      "steps": 30,
+      "cfg": 3,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "positive": ["7", 0],
+      "negative": ["7", 1],
+      "latent_image": ["6", 0],
+      "denoise": 1
+    }
+  },
+  "9": {
+    "class_type": "VAEDecode",
+    "inputs": { "samples": ["8", 0], "vae": ["1", 2] }
+  },
+  "10": {
+    "class_type": "CreateVideo",
+    "inputs": { "images": ["9", 0], "fps": 24 }
+  },
+  "11": {
+    "class_type": "SaveVideo",
+    "_meta": { "title": "Clip output (read by Shotlist)" },
+    "inputs": { "video": ["10", 0], "filename_prefix": "shotlist-t2v", "format": "mp4", "codec": "h264" }
+  }
+}

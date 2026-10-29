@@ -64,8 +64,16 @@ export interface Project {
   createdAt: number;
   updatedAt: number;
   mode: Mode;
-  image: { file: string; name: string; mime: string };
-  /** Bundled sample image id, when the project started from one (demo mode). */
+  /**
+   * Reference still for image-to-video. For a text-only project it is missing
+   * until shot 1 renders, then holds shot 1's last frame.
+   */
+  image?: { file: string; name: string; mime: string };
+  /** Text-only project: the scene, sent verbatim as shot 1's text-to-video prompt. */
+  scene?: string;
+  /** Text-only project: render key of the shot-1 render `image` was extracted from. */
+  frameOf?: string;
+  /** Bundled sample id, when the project started from one (demo mode). */
   sample?: string;
   shots: Shot[];
   output?: ProjectOutput;
