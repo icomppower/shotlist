@@ -1,0 +1,86 @@
+import type { ManualCamera, Mode, MoveId } from "./moves";
+
+export type RenderState = "queued" | "running" | "done" | "failed";
+
+export interface ShotRender {
+  /** Runner job id. */
+  jobId: string;
+  runner: string;
+  /** Render key of the shot settings this job was submitted with. */
+  key: string;
+  /** Mode the job was submitted in. */
+  mode: Mode;
+  /** The exact prompt string handed to the runner. */
+  sentPrompt: string;
+  state: RenderState;
+  /** 0..1 */
+  progress: number;
+  error?: string;
+  /** File name of the clip inside the project dir, once done. */
+  clip?: string;
+  credits?: number;
+  submittedAt: number;
+  finishedAt?: number;
+}
+
+export interface Shot {
+  id: string;
+  /** Preset move (Director and Direct modes). */
+  move: MoveId;
+  /** Hand-set camera (Manual mode). */
+  camera: ManualCamera;
+  /** Seconds, MIN_DURATION..MAX_DURATION. */
+  duration: number;
+  /** Director mode: optional scene note the planner builds the prompt from. */
+  note: string;
+  /** Direct/Manual mode: the prompt, sent byte-for-byte. */
+  prompt: string;
+  /** True while `prompt` is still the planner's untouched starting text. */
+  promptSeeded: boolean;
+  /** Bumped by "new take" to force a re-render with unchanged settings. */
+  take: number;
+  render?: ShotRender;
+  /** How many times this shot has been submitted to a runner. */
+  renderCount: number;
+}
+
+export interface ProjectOutput {
+  /** Stitch key (hash of the ordered clips). */
+  key: string;
+  state: "stitching" | "done" | "failed";
+  /** Latest stitched file (kept from the previous cut while re-stitching). */
+  file?: string;
+  duration?: number;
+  error?: string;
+  startedAt: number;
+  finishedAt?: number;
+}
+
+export interface Project {
+  id: string;
+  createdAt: number;
+  updatedAt: number;
+  mode: Mode;
+  image: { file: string; name: string; mime: string };
+  shots: Shot[];
+  output?: ProjectOutput;
+  /** Total credits used across every submitted job. */
+  creditsUsed: number;
+}
+
+/** Project as returned by the API, with derived fields for the UI. */
+export interface ProjectView extends Project {
+  runner: string;
+  shotsView: Array<{
+    id: string;
+    /** Render matches the current settings and is done. */
+    fresh: boolean;
+    /** Has a job in flight for the current settings. */
+    inFlight: boolean;
+    /** Prompt that would be sent right now. */
+    prompt: string;
+  }>;
+  /** Output matches the current shot list and is done. */
+  outputFresh: boolean;
+  expectedDuration: number;
+}

@@ -1,0 +1,21 @@
+# deps
+node_modules/
+
+# next
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# local render data (uploads, clips, stitched output)
+.data/
+
+# env files — never commit secrets
+.env.local
+.env*
+!.env.example
+
+# misc
+.DS_Store
+.vercel
+npm-debug.log*
