@@ -172,7 +172,7 @@ export function Monitor({
         <button className="btn ghost" onClick={() => input.current?.click()} disabled={uploading}>
           {uploading ? "Uploading…" : "Replace image"}
         </button>
-        {out?.duration && <span className="muted mono small">{out.duration.toFixed(1)}s · 1280×720</span>}
+        {out?.duration && <span className="muted mono small">{out.duration.toFixed(1)}s · 1280×704</span>}
         {fileInput}
       </div>
       {out?.state === "failed" && <p className="error-inline">Stitch failed: {out.error}</p>}

@@ -34,8 +34,10 @@ export interface Shot {
   camera: ManualCamera;
   /** Seconds, MIN_DURATION..MAX_DURATION. */
   duration: number;
-  /** Director mode: optional scene note the planner builds the prompt from. */
+  /** Director mode: the user's own scene note, sent verbatim ahead of the shot note. */
   note: string;
+  /** Director mode: the planner's shot note (vibe planner); "" = the move's default. */
+  shotNote: string;
   /** Direct/Manual mode: the prompt, sent byte-for-byte. */
   prompt: string;
   /** True while `prompt` is still the planner's untouched starting text. */

@@ -112,10 +112,32 @@ export const MANUAL_LIMITS = {
 export type CameraParams = { kind: "preset"; move: MoveId } | ({ kind: "manual" } & ManualCamera);
 
 /**
- * Director-mode planner: a deterministic template (no LLM). Turns an optional
- * scene note + the chosen move into the prompt text.
+ * Manual mode's camera numbers as a short phrase for LTX. Comfy Cloud has no
+ * camera-control LoRA for LTX 2.5, so the move has to travel in the prompt;
+ * this is appended in code after the user's text and shown in "Sent to LTX:".
+ * Returns "" when every slider is at rest (nothing is appended).
  */
-export function planPrompt(move: MoveId, note: string): string {
-  const scene = note.trim().replace(/[.\s]+$/, "") || "The scene in the reference image";
-  return `${scene}. ${MOVES[move].cameraPrompt}, cinematic lighting, consistent with the reference image.`;
+export function manualCameraPhrase(c: ManualCamera): string {
+  const parts: string[] = [];
+  const dz = c.zoomEnd - c.zoomStart;
+  if (Math.abs(dz) >= 0.1) parts.push(`${Math.abs(dz) >= 0.8 ? "fast" : "slow"} ${dz > 0 ? "push in" : "pull back"}`);
+  if (Math.abs(c.panX) >= 0.1) parts.push(`pan ${c.panX > 0 ? "right" : "left"}`);
+  if (Math.abs(c.panY) >= 0.1) parts.push(`tilt ${c.panY > 0 ? "down" : "up"}`);
+  if (Math.abs(c.roll) >= 1) parts.push(`${Math.abs(c.roll) >= 6 ? "" : "slight "}roll ${c.roll > 0 ? "clockwise" : "counterclockwise"}`);
+  return parts.length ? `Camera: ${parts.join(", ")}.` : "";
+}
+
+/** The planner's note for a move when no vibe plan has set one. */
+export function defaultShotNote(move: MoveId): string {
+  return `${MOVES[move].cameraPrompt}, cinematic lighting, consistent with the reference image.`;
+}
+
+/**
+ * Director-mode prompt, assembled in code: the user's scene note verbatim,
+ * then a space, then the planner's shot note (from the vibe planner, or the
+ * move's default). The user's words are never rewritten.
+ */
+export function planPrompt(move: MoveId, note: string, shotNote = ""): string {
+  const planned = shotNote || defaultShotNote(move);
+  return note ? `${note} ${planned}` : planned;
 }

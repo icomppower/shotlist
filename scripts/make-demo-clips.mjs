@@ -63,6 +63,25 @@ function hasKey() {
   return /^\s*COMFY_API_KEY\s*=\s*\S+/m.test(readFileSync(".env.local", "utf8"));
 }
 
+/**
+ * Prepaid balance in cents from Comfy's billing endpoint. Charges post a few
+ * minutes late and the balance is workspace-wide, so the per-clip numbers the
+ * app reports at render time can read 0; the before/after delta of a whole run
+ * is the honest total. The key never leaves this process.
+ */
+async function balanceCents() {
+  const key =
+    process.env.COMFY_API_KEY || (readFileSync(".env.local", "utf8").match(/^\s*COMFY_API_KEY\s*=\s*(\S+)/m) ?? [])[1];
+  if (!key) return undefined;
+  try {
+    const res = await fetch("https://cloud.comfy.org/api/billing/balance", { headers: { "X-API-Key": key } });
+    const b = await res.json();
+    return typeof b.effective_balance_cents === "number" ? b.effective_balance_cents : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function startServer(env) {
   server?.kill();
   const dataDir = mkdtempSync(path.join(tmpdir(), "shotlist-democlips-"));
@@ -133,6 +152,7 @@ function readMeta(sample) {
 let grandTotal = 0;
 if (!args["trailer-only"]) {
   if (!hasKey()) fail("COMFY_API_KEY is not set — add it to .env.local (never commit it)");
+  const balanceBefore = await balanceCents();
   await startServer({ RUNNER: "comfy" });
   const moves = only ?? MOVES;
   for (const sample of samples) {
@@ -173,7 +193,11 @@ if (!args["trailer-only"]) {
     console.log(`  ${sample}: ${total} credits for ${p.shots.filter((s) => s.render?.state === "done").length} clip(s)`);
     if (p.shots.some((s) => s.render?.state !== "done")) fail("some moves failed — fix and re-run with --only=<move>");
   }
-  console.log(`\nCredits used this run: ${grandTotal}`);
+  console.log(`\nCredits used this run (as reported at render time): ${grandTotal}`);
+  const balanceAfter = await balanceCents();
+  if (balanceBefore !== undefined && balanceAfter !== undefined) {
+    console.log(`Balance drop so far: ${(balanceBefore - balanceAfter).toFixed(0)} cents (charges post late — re-check platform.comfy.org in a few minutes)`);
+  }
 }
 
 // ---------------------------------------------------------------- sample trailer

@@ -1,6 +1,6 @@
 import type { ProjectView, Shot } from "./types";
 
-export type EditableShot = Pick<Shot, "id" | "move" | "camera" | "duration" | "note" | "prompt">;
+export type EditableShot = Pick<Shot, "id" | "move" | "camera" | "duration" | "note" | "shotNote" | "prompt">;
 
 export class ApiError extends Error {
   constructor(message: string, public demo?: string) {
@@ -65,5 +65,5 @@ export function clientId(): string {
 }
 
 export const toEditable = (s: Shot): EditableShot => ({
-  id: s.id, move: s.move, camera: s.camera, duration: s.duration, note: s.note, prompt: s.prompt,
+  id: s.id, move: s.move, camera: s.camera, duration: s.duration, note: s.note, shotNote: s.shotNote ?? "", prompt: s.prompt,
 });

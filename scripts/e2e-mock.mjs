@@ -28,6 +28,13 @@ const CAP = 10; // renders below: 4 + 1 retry + 1 swap + 1 direct = 7, then 4 mo
 const log = (...a) => console.log("•", ...a);
 let server;
 let stub;
+// A crash inside the stub's request handler must not orphan the Next server.
+process.on("uncaughtException", (e) => {
+  console.error("✗ uncaught:", e);
+  server?.kill();
+  stub?.close();
+  process.exit(1);
+});
 let serverLog = "";
 function assert(cond, msg) {
   if (!cond) {
@@ -40,6 +47,13 @@ function assert(cond, msg) {
 }
 
 async function startServer(env) {
+  // A server left over from a crashed run would silently answer for this one.
+  try {
+    await fetch(BASE);
+    throw new Error(`port ${PORT} is already in use — stop the old server first`);
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith("port ")) throw e;
+  }
   server = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "-p", String(PORT)], {
     // Explicit values win over anything in .env.local.
     env: { ...process.env, STORAGE: "local", SHOTLIST_DATA_DIR: DATA_DIR, COMFY_API_KEY: "", ...env },
@@ -235,18 +249,29 @@ function startComfyStub(port, key, clipPath) {
       return json(401, { error: "invalid key" });
     }
     if (url.pathname === "/api/upload/image") return json(200, { name: "upload.png", subfolder: "", type: "input" });
+    if (url.pathname === "/api/billing/balance") {
+      // 7 cents per finished job, like the live prepaid balance the runner diffs.
+      const finished = [...jobs].filter(([k, t]) => !String(k).endsWith(":out") && Date.now() - t > 1500).length;
+      return json(200, { effective_balance_cents: 10000 - 7 * finished, currency: "usd" });
+    }
     if (url.pathname === "/api/prompt") {
       const graph = JSON.parse(body.toString()).prompt;
       const id = `p${jobs.size + 1}`;
       jobs.set(id, Date.now());
-      seen.prompts.push(graph["3"].inputs.text);
-      seen.graphs.push(graph["5"]?.class_type === "LoadImage" ? "i2v" : "t2v");
+      // Read the prompt where the map files say it lives, so the stub follows workflow re-exports.
+      const kind = Object.values(graph).some((n) => n.class_type === "LoadImage") ? "i2v" : "t2v";
+      const map = JSON.parse(readFileSync(`workflows/${kind === "t2v" ? "shotlist-t2v" : "shotlist"}.map.json`, "utf8"));
+      const promptAt = map.inputs.find((i) => i.from === "prompt");
+      seen.prompts.push(graph[promptAt.node].inputs[promptAt.input]);
+      seen.graphs.push(kind);
+      jobs.set(`${id}:out`, map.output.node);
       return json(200, { prompt_id: id });
     }
     let m = url.pathname.match(/^\/api\/job\/(\w+)\/status$/);
-    if (m) return json(200, { status: Date.now() - jobs.get(m[1]) > 1500 ? "completed" : "in_progress" }, { "X-Comfy-Credits-Used": "7" });
+    // Live API vocabulary: "success" when done, "executing" while running.
+    if (m) return json(200, { status: Date.now() - jobs.get(m[1]) > 1500 ? "success" : "executing" });
     m = url.pathname.match(/^\/api\/jobs\/(\w+)$/);
-    if (m) return json(200, { outputs: { 11: { videos: [{ filename: `${m[1]}.mp4`, subfolder: "", type: "output" }] } } });
+    if (m) return json(200, { outputs: { [jobs.get(`${m[1]}:out`)]: { videos: [{ filename: `${m[1]}.mp4`, subfolder: "", type: "output" }] } } });
     if (url.pathname === "/api/view") {
       res.writeHead(302, { location: `/signed/${url.searchParams.get("filename")}` });
       return res.end();
@@ -285,7 +310,7 @@ function readJob(dir, id) {
 // ---------------------------------------------------------------- text only (no image)
 
 async function textSuite() {
-  await restart({ RUNNER: "mock" }, "text");
+  await restart({ RUNNER: "mock", DAILY_SHOT_CAP: "60" }, "text"); // explicit: .env.local may set a small cap
   const scene = "  A neon-lit noodle bar in the rain — steam, “reflections”, 2 a.m.\n ";
   let p = await sceneProject(scene);
   assert(p.scene === scene && !p.image && p.shots.length === 4, "text: project from a scene has no image and 4 starter shots");
@@ -399,7 +424,7 @@ async function demoSuite() {
   assert(byok.shotsView.every((s) => s.inFlight), "BYOK: without the key, a poll leaves the jobs alone");
   byok = await settle(up.id, { key: KEY });
   assert(byok.outputFresh && byok.shots.every((s) => s.render.runner === "comfy"), "BYOK: rendered by the ComfyRunner and stitched");
-  assert(byok.creditsUsed === 28, `BYOK: credits from X-Comfy-Credits-Used (${byok.creditsUsed} = 4 × 7)`);
+  assert(byok.creditsUsed === 28, `BYOK: credits from the balance drop (${byok.creditsUsed} = 4 × 7 cents)`);
   const sent = seen.prompts.slice(base);
   assert(sent.length === 4 && sent.every((t, i) => t === byok.shots[i].render.sentPrompt), "BYOK: prompts reach Comfy byte-for-byte");
   assert(seen.keysOnSignedUrl === 0, "BYOK: the key is not sent to the signed download URL");

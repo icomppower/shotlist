@@ -55,7 +55,8 @@ export async function extractLastFrame(video: string, outJpg: string): Promise<v
 }
 
 /** Shared encode settings so every clip can be xfaded without re-timing. */
-export const VIDEO = { width: 1280, height: 720, fps: 24 } as const;
+// 704, not 720: LTX 2.5 works in multiples of 32, so clips come back 1280×704 and pass through unscaled.
+export const VIDEO = { width: 1280, height: 704, fps: 24 } as const;
 export const ENCODE_ARGS = [
   "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
   "-pix_fmt", "yuv420p", "-r", String(VIDEO.fps), "-movflags", "+faststart", "-an",

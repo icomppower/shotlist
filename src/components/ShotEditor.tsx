@@ -52,13 +52,13 @@ export function ShotEditor({
             onChange={(e) => onChange({ note: e.target.value })}
           />
           <p className="planned">
-            <span className="sent-label">Planner prompt:</span> <code>{planPrompt(shot.move, shot.note)}</code>
+            <span className="sent-label">Planner prompt:</span> <code>{planPrompt(shot.move, shot.note, shot.shotNote)}</code>
           </p>
         </div>
       ) : (
         <div className="field">
           <label htmlFor={`prompt-${shot.id}`}>
-            Prompt <span className="muted">— sent to LTX exactly as typed</span>
+            Prompt <span className="muted">{mode === "manual" ? "— sent as typed, then your camera numbers as a short phrase" : "— sent to LTX exactly as typed"}</span>
           </label>
           <textarea
             id={`prompt-${shot.id}`}

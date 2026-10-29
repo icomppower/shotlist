@@ -8,6 +8,7 @@ import {
 import type { ProjectView } from "@/lib/types";
 import { ApiError, api, clientId, fileUrl, setComfyKey, toEditable, type EditableShot } from "@/lib/client";
 import { DEMO_T2V_MOVE, DEMO_T2V_SECONDS, type Sample } from "@/lib/samples";
+import { planVibe } from "@/lib/planner";
 import { MovePreview } from "./MovePreview";
 import { ShotEditor } from "./ShotEditor";
 import { Monitor } from "./Monitor";
@@ -39,6 +40,10 @@ export function Studio({
   const [demoHit, setDemoHit] = useState(false);
   // Bring-your-own-key: React state + client.ts memory only.
   const [userKey, setUserKey] = useState("");
+  // Director mode: "Describe the vibe" field; Enter fills the shot list.
+  const [vibe, setVibe] = useState("");
+  // Shot cards: shared trailing words of "Sent to LTX:" collapsed behind "…".
+  const [showTail, setShowTail] = useState(false);
 
   const id = view?.id;
   const latest = useRef({ shots, mode });
@@ -147,11 +152,28 @@ export function Studio({
   const addShot = () => {
     const move: MoveId = "slow_push_in";
     const s: EditableShot = {
-      id: clientId(), move, camera: { ...DEFAULT_MANUAL_CAMERA }, duration: 4, note: "",
+      id: clientId(), move, camera: { ...DEFAULT_MANUAL_CAMERA }, duration: 4, note: "", shotNote: "",
       prompt: mode === "director" ? "" : planPrompt(move, ""),
     };
     editShots((all) => [...all, s]);
     setOpenShot(s.id);
+  };
+
+  /** Director vibe: the planner picks move, duration and shot note; the user's notes stay as typed. */
+  const applyVibe = () => {
+    const plan = planVibe(vibe);
+    editShots((all) =>
+      plan.map((p, i) => ({
+        id: all[i]?.id ?? clientId(),
+        camera: all[i]?.camera ?? { ...DEFAULT_MANUAL_CAMERA },
+        note: all[i]?.note ?? "",
+        prompt: all[i]?.prompt ?? "",
+        move: p.move,
+        duration: p.duration,
+        shotNote: p.shot_note,
+      })),
+    );
+    setOpenShot(null);
   };
 
   // ---------------------------------------------------------------- drag to reorder
@@ -209,6 +231,16 @@ export function Studio({
   const total = shots.reduce((t, s) => t + s.duration, 0) - 0.5 * Math.max(shots.length - 1, 0);
 
   const stale = view ? view.shotsView.filter((s) => !s.fresh && !s.inFlight).length : 0;
+  // Words every rendered shot's prompt ends with (the shared planner tail), so cards show only the move-specific part.
+  const sharedTail = useMemo(() => {
+    const sent = (view?.shots ?? []).map((s) => s.render?.sentPrompt).filter((p): p is string => !!p);
+    if (sent.length < 2) return "";
+    const words = sent.map((p) => p.split(" "));
+    const n = Math.min(...words.map((w) => w.length)) - 1; // never swallow a whole prompt
+    let k = 0;
+    while (k < n && words.every((w) => w[w.length - 1 - k] === words[0][words[0].length - 1 - k])) k++;
+    return k >= 3 ? words[0].slice(words[0].length - k).join(" ") : "";
+  }, [view]);
   const hasOutput = !!view?.output?.file;
   let cta = "Generate video";
   // Demo mode without a key can only replay pre-made clips: a sample image,
@@ -222,7 +254,7 @@ export function Studio({
           ? true
           : view.scene && i === 0
             ? s.move !== DEMO_T2V_MOVE || s.duration !== DEMO_T2V_SECONDS // shot 1 = the pre-made text-to-video shot
-            : (mode === "director" ? planPrompt(s.move, s.note) : s.prompt) !== planPrompt(s.move, ""),
+            : (mode === "director" ? planPrompt(s.move, s.note, s.shotNote) : s.prompt) !== planPrompt(s.move, ""),
       ));
 
   // Blocked renders show the sample — but never over the user's own finished cut.
@@ -268,7 +300,15 @@ export function Studio({
             ))}
           </div>
         )}
-        {view?.runner === "mock" && <span className="badge" title="RUNNER=mock: clips are faked locally">mock runner</span>}
+        {view && (
+          <span className="badge" title={`RUNNER=${view.runner}`}>
+            {view.runner === "mock"
+              ? "mock runner"
+              : view.runner === "demo"
+                ? demoReal ? "Demo mode — real LTX renders" : "Demo mode — placeholder clips"
+                : "LTX 2.5 on Comfy Cloud"}
+          </span>
+        )}
       </header>
 
       {error && (
@@ -298,6 +338,19 @@ export function Studio({
               <span className="muted mono">{shots.length} shots · {total.toFixed(1)}s</span>
             </div>
             <p className="muted hint">{MODE_LABELS[mode].hint} Drag ⋮⋮ to reorder, tap a shot to change it.</p>
+            {mode === "director" && (
+              <input
+                className="vibe-field"
+                aria-label="Describe the vibe"
+                placeholder="Describe the vibe (e.g. horror trailer) ↵"
+                value={vibe}
+                disabled={busy}
+                onChange={(e) => setVibe(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && vibe.trim()) applyVibe();
+                }}
+              />
+            )}
 
             <ol className="shots">
               {shots.map((s, i) => {
@@ -391,7 +444,16 @@ export function Studio({
                     {r && (
                       <p className="sent">
                         <span className="sent-label">Sent to LTX:</span>{" "}
-                        <code>{r.sentPrompt === "" ? "(empty prompt)" : r.sentPrompt}</code>
+                        {r.sentPrompt === "" ? (
+                          <code>(empty prompt)</code>
+                        ) : sharedTail && r.sentPrompt.endsWith(sharedTail) && !showTail ? (
+                          <>
+                            <code>{r.sentPrompt.slice(0, r.sentPrompt.length - sharedTail.length).trimEnd()}</code>{" "}
+                            <button className="ellipsis" onClick={() => setShowTail(true)} title={sharedTail} aria-label="Show the shared words">…</button>
+                          </>
+                        ) : (
+                          <code>{r.sentPrompt}</code>
+                        )}
                         {st && !st.fresh && !st.inFlight && r.state !== "failed" && <span className="changed"> · changed, re-sends on next generate</span>}
                       </p>
                     )}
@@ -424,15 +486,7 @@ export function Studio({
                       setComfyKey(e.target.value);
                     }}
                   />
-                  {demoMode && (
-                    <p className="muted small demo-line">
-                      {needsKey
-                        ? "Paste a Comfy key to render your own."
-                        : demoReal
-                          ? "Demo mode — real LTX renders, pre-made."
-                          : "Demo mode — placeholder clips until the real LTX renders are added."}
-                    </p>
-                  )}
+                  {demoMode && needsKey && <p className="muted small demo-line">Paste a Comfy key to render your own.</p>}
                 </>
               )}
               <button className="cta" disabled={ctaDisabled} onClick={() => void generate()}>

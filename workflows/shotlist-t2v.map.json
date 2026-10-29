@@ -1,13 +1,38 @@
 {
-  "_comment": "Text-to-video (shot 1 of a text-only project). Same contract as shotlist.map.json, but there is no image: 'prompt' is the scene text, verbatim.",
+  "_comment": "t2v API-format graph flattened from Comfy Cloud template \"LTX-2.5: Text to Video\" (2026-10-29). Prompt enhancer removed: node 376 (Prompt) feeds CLIPTextEncode directly, so the text goes to LTX byte-for-byte. Node ids are <subgraph-instance>:<inner-node>. frames are computed inside (fps*duration+1); duration is whole seconds.",
   "inputs": [
-    { "from": "prompt", "node": "3", "input": "text" },
-    { "from": "frames", "node": "6", "input": "length" },
-    { "from": "width", "node": "6", "input": "width" },
-    { "from": "height", "node": "6", "input": "height" },
-    { "from": "fps", "node": "7", "input": "frame_rate" },
-    { "from": "fps", "node": "10", "input": "fps" },
-    { "from": "seed", "node": "8", "input": "seed" }
+    {
+      "from": "prompt",
+      "node": "405:376",
+      "input": "value"
+    },
+    {
+      "from": "duration",
+      "node": "405:362",
+      "input": "value"
+    },
+    {
+      "from": "width",
+      "node": "405:372",
+      "input": "value"
+    },
+    {
+      "from": "height",
+      "node": "405:360",
+      "input": "value"
+    },
+    {
+      "from": "fps",
+      "node": "405:361",
+      "input": "value"
+    },
+    {
+      "from": "seed",
+      "node": "405:339",
+      "input": "noise_seed"
+    }
   ],
-  "output": { "node": "11" }
+  "output": {
+    "node": "75"
+  }
 }

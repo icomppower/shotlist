@@ -28,12 +28,19 @@ import type { JobRunner, JobStatus, ShotJobInput } from "./types";
  * project run on Comfy at once; the rest wait in a small per-project queue
  * (per project, because each visitor's queue can only be advanced with their key).
  *
- * UNTESTED against the live API (built without a key) — see README.
+ * Job status values seen live / documented (2026-10-29): terminal are
+ * success|completed, error|non_retryable_error|lost, cancelled; in flight are
+ * waiting_to_dispatch|submitted|queued_waiting|pending|preparing|executing|
+ * in_progress. A failed job may carry error_message. Credits: the API has no
+ * per-job cost field, so we read GET /api/billing/balance (prepaid cents)
+ * before submit and after completion and charge the job the difference.
  */
 
-const BASE = (process.env.COMFY_API_BASE ?? "https://cloud.comfy.org").replace(/\/+$/, "");
+const BASE = (process.env.COMFY_API_BASE || "https://cloud.comfy.org").replace(/\/+$/, "");
 const MAX_CONCURRENT = 3;
 const queueKey = (projectId: string) => `comfy-jobs/queue-${projectId}.json`;
+/** Last balance reading (cents) that credits are measured from; see settleCredits. */
+const BALANCE_KEY = "comfy-jobs/balance.json";
 const WORKFLOW_DIR = path.join(process.cwd(), "workflows");
 
 type Workflow = Record<string, { class_type: string; inputs: Record<string, unknown> }>;
@@ -64,10 +71,17 @@ interface ComfyJob {
   submittedAt?: number;
   promptId?: string;
   output?: { filename: string; subfolder: string; type: string };
+  /** Credits (prepaid balance cents) charged for this job, 0 until known. */
   credits: number;
+  /** Prepaid balance in cents just before submit; the job's cost is the drop from here. */
+  balanceBefore?: number;
   reason?: string;
   error?: string;
 }
+
+const DONE_STATES = ["success", "completed", "succeeded", "done"];
+const FAILED_STATES = ["error", "non_retryable_error", "lost", "failed", "cancelled", "canceled"];
+const QUEUED_STATES = ["waiting_to_dispatch", "submitted", "queued_waiting", "queued", "pending", "waiting", "preparing"];
 
 const jobKey = (id: string) => `comfy-jobs/${id}.json`;
 const saveJob = (j: ComfyJob) => getStorage().writeJson(jobKey(j.id), j);
@@ -193,6 +207,7 @@ export class ComfyRunner implements JobRunner {
         try {
           const image = await this.uploadImage(job.input);
           const prompt = await this.buildPrompt(job.input, image);
+          if (q.active.length === 0) job.balanceBefore = await this.baselineBalance();
           const res = await this.api("/api/prompt", {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -237,6 +252,48 @@ export class ComfyRunner implements JobRunner {
     if (Number.isFinite(c) && c > job.credits) job.credits = c;
   }
 
+  /** Prepaid balance in cents (GET /api/billing/balance), or undefined if unavailable. */
+  private async balanceCents(): Promise<number | undefined> {
+    try {
+      const body = (await (await this.api("/api/billing/balance")).json()) as {
+        effective_balance_cents?: number;
+        prepaid_balance_cents?: number;
+        amount_cents?: number;
+      };
+      const c = body.effective_balance_cents ?? body.prepaid_balance_cents ?? body.amount_cents;
+      return typeof c === "number" && Number.isFinite(c) ? c : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Charge the job the balance drop since the last settled job (whole cents,
+   * never negative). Drops are chained, so concurrent shots never double count:
+   * the sum over a batch equals the real drop from first submit to last finish.
+   * The baseline is (re)taken whenever a batch starts with nothing in flight.
+   */
+  private async settleCredits(job: ComfyJob) {
+    await withLock("comfy-balance", async () => {
+      const storage = getStorage();
+      const last = (await storage.readJson<{ cents: number }>(BALANCE_KEY))?.cents;
+      const after = await this.balanceCents();
+      if (after === undefined) return;
+      if (last !== undefined) {
+        const spent = Math.max(0, Math.round(last - after));
+        if (spent > job.credits) job.credits = spent;
+      }
+      await storage.writeJson(BALANCE_KEY, { cents: after });
+    });
+  }
+
+  /** Start of a batch (nothing in flight): record the balance the drops are measured from. */
+  private async baselineBalance(): Promise<number | undefined> {
+    const b = await this.balanceCents();
+    if (b !== undefined) await getStorage().writeJson(BALANCE_KEY, { cents: b });
+    return b;
+  }
+
   // ---------------------------------------------------------------- JobRunner
 
   async submitShot(input: ShotJobInput): Promise<{ jobId: string }> {
@@ -265,19 +322,26 @@ export class ComfyRunner implements JobRunner {
     try {
       const res = await this.api(`/api/job/${encodeURIComponent(job.promptId!)}/status`);
       this.trackCredits(job, res);
-      const body = (await res.json()) as { status?: string; progress?: number; error?: unknown };
+      const body = (await res.json()) as {
+        status?: string;
+        progress?: number;
+        error?: unknown;
+        error_message?: unknown;
+      };
       const status = String(body.status ?? "").toLowerCase();
-      if (["completed", "success", "succeeded", "done"].includes(status)) {
+      if (DONE_STATES.includes(status)) {
         job.output = await this.findOutput(job);
+        await this.settleCredits(job);
         job.state = "done";
-      } else if (["failed", "error", "cancelled", "canceled"].includes(status)) {
-        const detail = await this.errorDetail(job, body.error);
-        this.fail(job, new Error(detail));
+      } else if (FAILED_STATES.includes(status)) {
+        const detail = await this.errorDetail(job, body.error_message ?? body.error);
+        this.fail(job, new Error(status === "cancelled" || status === "canceled" ? `Cancelled: ${detail}` : detail));
+        await this.settleCredits(job);
       } else {
         await saveJob(job);
         const est = (Date.now() - (job.submittedAt ?? job.createdAt)) / 90_000;
         const progress = typeof body.progress === "number" ? body.progress : Math.min(est, 0.95);
-        return { state: ["pending", "queued", "waiting"].includes(status) ? "queued" : "running", progress };
+        return { state: QUEUED_STATES.includes(status) ? "queued" : "running", progress };
       }
     } catch (err) {
       // Transient network errors: keep polling. HTTP errors fail the shot.

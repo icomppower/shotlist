@@ -281,6 +281,18 @@ a { color: inherit; }
   font-family: var(--mono); font-size: 0.85rem;
 }
 .demo-line { margin: -2px 2px 0; }
+/* Director mode: "Describe the vibe" */
+.vibe-field {
+  width: 100%; margin: -4px 0 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 12px; font-size: 0.92rem;
+}
+.vibe-field:focus { border-color: var(--accent); outline: none; }
+/* Shot cards: shared trailing prompt words collapsed behind "…" */
+.ellipsis {
+  background: none; border: 1px solid var(--line); border-radius: 6px; padding: 0 6px; line-height: 1.2;
+  font-family: var(--mono); color: var(--muted); cursor: pointer;
+}
+.ellipsis:hover { border-color: var(--accent); color: var(--accent); }
 .sample-pick {
   margin-top: 12px; width: 100%; display: flex; align-items: center; gap: 12px; padding: 8px; text-align: left;
   border-radius: 12px; border: 1px solid var(--line); background: var(--panel); font-weight: 600;

@@ -1,14 +1,43 @@
 {
-  "_comment": "Which node inputs Shotlist fills in workflows/shotlist.json. 'from' is one of: image, prompt, frames, fps, width, height, seed, duration, camera.move, camera.zoomStart, camera.zoomEnd, camera.panX, camera.panY, camera.roll. 'lookup' maps a value (e.g. a move id) to what the node needs; 'default' is used when the value is missing or not in the lookup.",
+  "_comment": "i2v API-format graph flattened from Comfy Cloud template \"LTX-2.5: Image to Video\" (2026-10-29). Prompt enhancer removed: node 376 (Prompt) feeds CLIPTextEncode directly, so the text goes to LTX byte-for-byte. Node ids are <subgraph-instance>:<inner-node>. frames are computed inside (fps*duration+1); duration is whole seconds.",
   "inputs": [
-    { "from": "image", "node": "5", "input": "image" },
-    { "from": "prompt", "node": "3", "input": "text" },
-    { "from": "frames", "node": "6", "input": "length" },
-    { "from": "width", "node": "6", "input": "width" },
-    { "from": "height", "node": "6", "input": "height" },
-    { "from": "fps", "node": "7", "input": "frame_rate" },
-    { "from": "fps", "node": "10", "input": "fps" },
-    { "from": "seed", "node": "8", "input": "seed" }
+    {
+      "from": "image",
+      "node": "395",
+      "input": "image"
+    },
+    {
+      "from": "prompt",
+      "node": "398:376",
+      "input": "value"
+    },
+    {
+      "from": "duration",
+      "node": "398:362",
+      "input": "value"
+    },
+    {
+      "from": "width",
+      "node": "398:372",
+      "input": "value"
+    },
+    {
+      "from": "height",
+      "node": "398:360",
+      "input": "value"
+    },
+    {
+      "from": "fps",
+      "node": "398:361",
+      "input": "value"
+    },
+    {
+      "from": "seed",
+      "node": "398:339",
+      "input": "noise_seed"
+    }
   ],
-  "output": { "node": "11" }
+  "output": {
+    "node": "75"
+  }
 }

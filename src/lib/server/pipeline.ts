@@ -2,7 +2,7 @@ import "server-only";
 import { promises as fs } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { after } from "next/server";
-import { CROSSFADE_SECONDS, planPrompt, type CameraParams } from "../moves";
+import { CROSSFADE_SECONDS, manualCameraPhrase, planPrompt, type CameraParams } from "../moves";
 import type { Project, ProjectView, Shot } from "../types";
 import { redact, runnerFor, runnerMode, type RunContext } from "../runners";
 import { VIDEO, extractLastFrame } from "./ffmpeg";
@@ -24,10 +24,20 @@ import { getStorage, hash, projectKey, scratchFile, withProject } from "./storag
 /** Shot 1 of a text-only project renders text-to-video. */
 export const isT2V = (p: Project, index: number) => !!p.scene && index === 0;
 
-/** The exact prompt a shot sends in the project's current mode. */
+/**
+ * The exact prompt a shot sends in the project's current mode.
+ * Direct: the user's text, verbatim. Director: the planner's text.
+ * Manual: the user's text, verbatim, then a short camera phrase appended in
+ * code (LTX 2.5 has no camera LoRA on Comfy Cloud); it is shown in "Sent to LTX:".
+ */
 export function resolvePrompt(p: Project, s: Shot, index: number): string {
   if (isT2V(p, index)) return p.scene!; // the scene text as typed, never rewritten
-  return p.mode === "director" ? planPrompt(s.move, s.note) : s.prompt;
+  if (p.mode === "director") return planPrompt(s.move, s.note, s.shotNote);
+  if (p.mode === "manual") {
+    const cam = manualCameraPhrase(s.camera);
+    return cam ? (s.prompt ? `${s.prompt} ${cam}` : cam) : s.prompt;
+  }
+  return s.prompt;
 }
 
 export function resolveCamera(p: Project, s: Shot): CameraParams {

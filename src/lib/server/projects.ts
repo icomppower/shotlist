@@ -24,6 +24,7 @@ export function newShot(move: MoveId = "slow_push_in"): Shot {
     camera: { ...DEFAULT_MANUAL_CAMERA },
     duration: DEFAULT_DURATION,
     note: "",
+    shotNote: "",
     prompt: "",
     promptSeeded: false,
     take: 0,
@@ -125,6 +126,7 @@ export function applyUpdate(p: Project, body: unknown) {
         camera: r.camera === undefined ? prev.camera : readCamera(r.camera, prev.camera),
         duration: Math.round(clamp(r.duration, MIN_DURATION, MAX_DURATION, prev.duration)),
         note: str(r.note, 1000, prev.note),
+        shotNote: str(r.shotNote, 1000, prev.shotNote ?? ""),
         prompt,
         promptSeeded: prompt === prev.prompt ? prev.promptSeeded : false,
       };
@@ -137,7 +139,7 @@ export function applyUpdate(p: Project, body: unknown) {
     if (p.mode === "director") {
       for (const s of p.shots) {
         if (s.prompt === "" || s.promptSeeded) {
-          s.prompt = planPrompt(s.move, s.note);
+          s.prompt = planPrompt(s.move, s.note, s.shotNote);
           s.promptSeeded = true;
         }
       }
