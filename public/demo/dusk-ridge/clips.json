@@ -1,4 +1,47 @@
 {
-  "source": "placeholder",
-  "note": "Made with the mock runner. Replace with real LTX renders: npm run demo:clips"
+  "source": "ltx",
+  "moves": {
+    "crash_zoom": {
+      "source": "ltx",
+      "credits": 41,
+      "prompt": "sudden aggressive crash zoom into the subject, fast snap zoom with slight camera shake, cinematic lighting, consistent with the reference image.",
+      "renderedAt": "2026-10-29T22:47:15.142Z"
+    },
+    "dolly_zoom": {
+      "source": "ltx",
+      "credits": 6,
+      "prompt": "dolly zoom vertigo effect, camera dollies in while zooming out, background warps and stretches, cinematic lighting, consistent with the reference image.",
+      "renderedAt": "2026-10-29T22:47:15.147Z"
+    },
+    "bullet_orbit": {
+      "source": "ltx",
+      "credits": 3,
+      "prompt": "bullet time, frozen moment, camera orbits smoothly around the subject in a half circle, cinematic lighting, consistent with the reference image.",
+      "renderedAt": "2026-10-29T22:47:15.151Z"
+    },
+    "fpv_dive": {
+      "source": "ltx",
+      "credits": 13,
+      "prompt": "FPV drone shot diving fast down into the scene, banking and rolling, accelerating forward, cinematic lighting, consistent with the reference image.",
+      "renderedAt": "2026-10-29T22:47:15.155Z"
+    },
+    "crane_reveal": {
+      "source": "ltx",
+      "credits": 0,
+      "prompt": "crane shot rising up and pulling back to reveal the full scene, smooth and majestic, cinematic lighting, consistent with the reference image.",
+      "renderedAt": "2026-10-29T22:47:15.158Z"
+    },
+    "whip_pan": {
+      "source": "ltx",
+      "credits": 5,
+      "prompt": "fast whip pan to the side with heavy motion blur, then settles on the new framing, cinematic lighting, consistent with the reference image.",
+      "renderedAt": "2026-10-29T22:47:15.161Z"
+    },
+    "slow_push_in": {
+      "source": "ltx",
+      "credits": 0,
+      "prompt": "slow steady cinematic push in toward the subject, smooth dolly forward, cinematic lighting, consistent with the reference image.",
+      "renderedAt": "2026-10-29T22:47:15.165Z"
+    }
+  }
 }
