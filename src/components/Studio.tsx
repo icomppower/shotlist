@@ -6,7 +6,8 @@ import {
   type Mode, type MoveId,
 } from "@/lib/moves";
 import type { ProjectView } from "@/lib/types";
-import { ApiError, api, clientId, fileUrl, toEditable, type EditableShot } from "@/lib/client";
+import { ApiError, api, clientId, fileUrl, setComfyKey, toEditable, type EditableShot } from "@/lib/client";
+import type { Sample } from "@/lib/samples";
 import { MovePreview } from "./MovePreview";
 import { ShotEditor } from "./ShotEditor";
 import { Monitor } from "./Monitor";
@@ -14,7 +15,20 @@ import { Monitor } from "./Monitor";
 const MAX_SHOTS = 12;
 const DURATIONS = Array.from({ length: MAX_DURATION - MIN_DURATION + 1 }, (_, i) => MIN_DURATION + i);
 
-export function Studio({ projectId }: { projectId?: string }) {
+export function Studio({
+  projectId,
+  mode: serverMode,
+  samples,
+  demoReal,
+}: {
+  projectId?: string;
+  /** RUNNER on the server: mock | comfy | demo. */
+  mode: string;
+  /** Selectable sample images (demo mode only). */
+  samples: Sample[];
+  /** Demo clips are real LTX renders (not the mock placeholders). */
+  demoReal: boolean;
+}) {
   const [view, setView] = useState<ProjectView | null>(null);
   const [shots, setShots] = useState<EditableShot[]>([]);
   const [mode, setMode] = useState<Mode>("director");
@@ -23,6 +37,8 @@ export function Studio({ projectId }: { projectId?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(!!projectId);
   const [demoHit, setDemoHit] = useState(false);
+  // Bring-your-own-key: React state + client.ts memory only.
+  const [userKey, setUserKey] = useState("");
 
   const id = view?.id;
   const latest = useRef({ shots, mode });
@@ -96,7 +112,7 @@ export function Studio({ projectId }: { projectId?: string }) {
   }, [busy, id, view, adopt]);
 
   // ---------------------------------------------------------------- actions
-  const upload = async (file: File) => {
+  const upload = async (file: File | { sample: string }) => {
     setError(null);
     setBusyAction("upload");
     try {
@@ -194,6 +210,14 @@ export function Studio({ projectId }: { projectId?: string }) {
   const stale = view ? view.shotsView.filter((s) => !s.fresh && !s.inFlight).length : 0;
   const hasOutput = !!view?.output?.file;
   let cta = "Generate video";
+  // Demo mode without a key can only replay pre-made clips: a sample image,
+  // preset moves, and the exact prompt each clip was rendered with.
+  const demoMode = serverMode === "demo" && !userKey;
+  const needsKey =
+    demoMode &&
+    (!view?.sample ||
+      shots.some((s) => mode === "manual" || (mode === "director" ? planPrompt(s.move, s.note) : s.prompt) !== planPrompt(s.move, "")));
+
   // Blocked renders show the sample — but never over the user's own finished cut.
   const demo = (demoHit || !!view?.demo) && !view?.outputFresh;
   let ctaDisabled = !view || shots.length === 0 || busyAction !== null || demo;
@@ -209,6 +233,8 @@ export function Studio({ projectId }: { projectId?: string }) {
   } else if (hasOutput && stale === 0) {
     cta = "Re-stitch video";
   }
+
+  if (needsKey) ctaDisabled = true;
 
   if (loading) return <main className="studio"><p className="muted pad">Loading…</p></main>;
 
@@ -254,6 +280,7 @@ export function Studio({ projectId }: { projectId?: string }) {
             demo={demo}
             uploading={busyAction === "upload"}
             onUpload={upload}
+            samples={samples}
           />
         </section>
 
@@ -375,6 +402,32 @@ export function Studio({ projectId }: { projectId?: string }) {
                 <h2><span className="step">3</span> Generate</h2>
                 {view.creditsUsed > 0 && <span className="muted mono">{view.creditsUsed} credits used</span>}
               </div>
+              {serverMode === "demo" && (
+                <>
+                  <input
+                    className="key-field"
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-label="Comfy API key (renders on your credits)"
+                    placeholder="Comfy API key (renders on your credits)"
+                    value={userKey}
+                    onChange={(e) => {
+                      setUserKey(e.target.value);
+                      setComfyKey(e.target.value);
+                    }}
+                  />
+                  {demoMode && (
+                    <p className="muted small demo-line">
+                      {needsKey
+                        ? "Paste a Comfy key to render your own."
+                        : demoReal
+                          ? "Demo mode — real LTX renders, pre-made."
+                          : "Demo mode — placeholder clips until the real LTX renders are added."}
+                    </p>
+                  )}
+                </>
+              )}
               <button className="cta" disabled={ctaDisabled} onClick={() => void generate()}>
                 {busyAction === "generate" ? "Starting…" : cta}
               </button>

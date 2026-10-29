@@ -6,42 +6,46 @@
 //   -> Edit & retry shot 2 only -> stitched MP4 -> swap one shot's move
 //   -> only that shot re-renders -> reorder re-stitches only
 //   -> Direct mode sends the prompt byte-for-byte -> daily cap shows the demo.
+// Then a second server with RUNNER=demo (the live-link setup, no server key):
+//   sample image replays pre-made clips; uploads / custom prompts need a key;
+//   bring-your-own-key renders through the ComfyRunner against a local stub of
+//   the Comfy API (no real network), and the key is never persisted or logged.
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import ffmpeg from "ffmpeg-static";
 
 const PORT = Number(process.env.E2E_PORT ?? 3199);
-const BASE = `http://localhost:${PORT}`;
-const DATA_DIR = mkdtempSync(path.join(tmpdir(), "shotlist-e2e-"));
+let BASE = `http://localhost:${PORT}`;
+let DATA_DIR = mkdtempSync(path.join(tmpdir(), "shotlist-e2e-"));
 const FAIL_SHOT = 2;
 const CAP = 10; // renders below: 4 + 1 retry + 1 swap + 1 direct = 7, then 4 more must be refused
 
 const log = (...a) => console.log("•", ...a);
 let server;
+let stub;
+let serverLog = "";
 function assert(cond, msg) {
   if (!cond) {
     console.error("✗", msg);
     server?.kill();
+    stub?.close();
     process.exit(1);
   }
   console.log("✓", msg);
 }
 
-async function startServer() {
+async function startServer(env) {
   server = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "-p", String(PORT)], {
-    env: {
-      ...process.env,
-      RUNNER: "mock",
-      STORAGE: "local",
-      SHOTLIST_DATA_DIR: DATA_DIR,
-      MOCK_FAIL_SHOT: String(FAIL_SHOT),
-      DAILY_SHOT_CAP: String(CAP),
-    },
-    stdio: ["ignore", "pipe", "inherit"],
+    // Explicit values win over anything in .env.local.
+    env: { ...process.env, STORAGE: "local", SHOTLIST_DATA_DIR: DATA_DIR, COMFY_API_KEY: "", ...env },
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  server.stdout.resume();
+  serverLog = "";
+  server.stdout.on("data", (d) => (serverLog += d));
+  server.stderr.on("data", (d) => (serverLog += d));
   for (let i = 0; i < 60; i++) {
     try {
       if ((await fetch(BASE)).ok) return;
@@ -51,10 +55,13 @@ async function startServer() {
   throw new Error("server did not start — run `npm run build` first");
 }
 
-async function call(method, url, body, { allow = [] } = {}) {
+async function call(method, url, body, { allow = [], key } = {}) {
   const res = await fetch(BASE + url, {
     method,
-    headers: body && !(body instanceof FormData) ? { "content-type": "application/json" } : undefined,
+    headers: {
+      ...(body && !(body instanceof FormData) ? { "content-type": "application/json" } : {}),
+      ...(key ? { "x-comfy-key": key } : {}),
+    },
     body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
   });
   const json = await res.json();
@@ -63,11 +70,11 @@ async function call(method, url, body, { allow = [] } = {}) {
 }
 
 /** Poll until nothing is rendering or stitching. */
-async function settle(id, timeoutMs = 120_000) {
+async function settle(id, { key, timeoutMs = 120_000 } = {}) {
   const t0 = Date.now();
   let last = "";
   while (Date.now() - t0 < timeoutMs) {
-    const p = await call("GET", `/api/projects/${id}`);
+    const p = await call("GET", `/api/projects/${id}`, undefined, { key });
     const line = p.shots.map((s) => `${s.render?.state ?? "-"}:${Math.round((s.render?.progress ?? 0) * 100)}%`).join(" ");
     if (line !== last) log(`progress ${line} output=${p.output?.state ?? "-"}`);
     last = line;
@@ -105,8 +112,8 @@ async function upload() {
 }
 
 try {
-  await startServer();
-  log(`server on ${BASE}, data in ${DATA_DIR}`);
+  await startServer({ RUNNER: "mock", MOCK_FAIL_SHOT: String(FAIL_SHOT), DAILY_SHOT_CAP: String(CAP) });
+  log(`mock server on ${BASE}, data in ${DATA_DIR}`);
 
   // 1. Upload ---------------------------------------------------------------
   let p = await upload();
@@ -193,7 +200,119 @@ try {
   assert(g.submitted.length === 3, "renders that fit under the cap still go through");
   assert(g.project.demo === "cap", "cap reached: project view reports the demo state");
 
+  await demoSuite();
   console.log(`\nAll good.`);
 } finally {
   server?.kill();
+  stub?.close();
+}
+
+// ---------------------------------------------------------------- demo mode + BYOK
+
+/** Minimal stand-in for the Comfy Cloud API, so BYOK runs without the network. */
+function startComfyStub(port, key, clipPath) {
+  const jobs = new Map();
+  const seen = { prompts: [], keysOnSignedUrl: 0, unauthorized: 0 };
+  stub = createServer(async (req, res) => {
+    const url = new URL(req.url, `http://localhost:${port}`);
+    const chunks = [];
+    for await (const c of req) chunks.push(c);
+    const body = Buffer.concat(chunks);
+    const json = (code, obj, headers = {}) => {
+      res.writeHead(code, { "content-type": "application/json", ...headers });
+      res.end(JSON.stringify(obj));
+    };
+    if (url.pathname.startsWith("/signed/")) {
+      if (req.headers["x-api-key"]) seen.keysOnSignedUrl++;
+      res.writeHead(200, { "content-type": "video/mp4" });
+      return res.end(readFileSync(clipPath));
+    }
+    if (req.headers["x-api-key"] !== key) {
+      seen.unauthorized++;
+      return json(401, { error: "invalid key" });
+    }
+    if (url.pathname === "/api/upload/image") return json(200, { name: "upload.png", subfolder: "", type: "input" });
+    if (url.pathname === "/api/prompt") {
+      const graph = JSON.parse(body.toString()).prompt;
+      const id = `p${jobs.size + 1}`;
+      jobs.set(id, Date.now());
+      seen.prompts.push(graph["3"].inputs.text);
+      return json(200, { prompt_id: id });
+    }
+    let m = url.pathname.match(/^\/api\/job\/(\w+)\/status$/);
+    if (m) return json(200, { status: Date.now() - jobs.get(m[1]) > 1500 ? "completed" : "in_progress" }, { "X-Comfy-Credits-Used": "7" });
+    m = url.pathname.match(/^\/api\/jobs\/(\w+)$/);
+    if (m) return json(200, { outputs: { 11: { videos: [{ filename: `${m[1]}.mp4`, subfolder: "", type: "output" }] } } });
+    if (url.pathname === "/api/view") {
+      res.writeHead(302, { location: `/signed/${url.searchParams.get("filename")}` });
+      return res.end();
+    }
+    json(404, { error: "not found" });
+  }).listen(port);
+  return seen;
+}
+
+function filesContaining(dir, needle) {
+  const hits = [];
+  for (const name of readdirSync(dir)) {
+    const f = path.join(dir, name);
+    if (statSync(f).isDirectory()) hits.push(...filesContaining(f, needle));
+    else if (readFileSync(f).includes(needle)) hits.push(f);
+  }
+  return hits;
+}
+
+async function demoSuite() {
+  server.kill();
+  await new Promise((r) => setTimeout(r, 500));
+  DATA_DIR = mkdtempSync(path.join(tmpdir(), "shotlist-e2e-demo-"));
+  const STUB_PORT = PORT + 100;
+  const KEY = "sk-test-shotlist-byok-0123456789";
+  const seen = startComfyStub(STUB_PORT, KEY, path.join(process.cwd(), "public/demo/dusk-ridge/slow_push_in.mp4"));
+  await startServer({ RUNNER: "demo", COMFY_API_BASE: `http://localhost:${STUB_PORT}`, DAILY_SHOT_CAP: "0" });
+  log(`demo server on ${BASE} (RUNNER=demo, no server key, cap 0), data in ${DATA_DIR}`);
+
+  // Sample image -> pre-made clips, stitched as usual
+  const form = new FormData();
+  form.append("sample", "dusk-ridge");
+  let p = await call("POST", "/api/projects", form);
+  assert(p.runner === "demo" && p.sample === "dusk-ridge" && p.shots.length === 4, "demo: project starts from the bundled sample");
+  let g = await call("POST", `/api/projects/${p.id}/generate`, {});
+  assert(g.submitted.length === 4, "demo: generate replays all 4 shots (cap 0 does not apply to demo)");
+  p = await settle(p.id);
+  assert(p.outputFresh && p.shots.every((s) => s.render.runner === "demo" && s.render.credits === 0), "demo: stitched from pre-made clips, 0 credits");
+  const file = await fetchDuration(p.id, p.output.file);
+  assert(Math.abs(file.duration - 14.5) < 0.15, `demo: stitched duration ${file.duration.toFixed(2)}s`);
+
+  // A custom prompt can't be replayed
+  p = await call("PATCH", `/api/projects/${p.id}`, { mode: "direct" });
+  p = await call("PATCH", `/api/projects/${p.id}`, { shots: p.shots.map((s, i) => (i === 0 ? { ...s, prompt: "my own words" } : s)) });
+  g = await call("POST", `/api/projects/${p.id}/generate`, {}, { allow: [400] });
+  assert(g.status === 400 && g.error === "Paste a Comfy key to render your own.", "demo: a custom prompt asks for a key");
+
+  // Uploads need a key
+  const up = await upload();
+  g = await call("POST", `/api/projects/${up.id}/generate`, {}, { allow: [400] });
+  assert(g.status === 400 && g.error === "Paste a Comfy key to render your own.", "demo: an uploaded image asks for a key");
+
+  // Bring your own key -> ComfyRunner (against the stub)
+  g = await call("POST", `/api/projects/${up.id}/generate`, {}, { key: KEY });
+  assert(g.submitted.length === 4, "BYOK: generate with a key submits all 4 shots");
+  let byok = await call("GET", `/api/projects/${up.id}`);
+  assert(byok.shotsView.every((s) => s.inFlight), "BYOK: without the key, a poll leaves the jobs alone");
+  byok = await settle(up.id, { key: KEY });
+  assert(byok.outputFresh && byok.shots.every((s) => s.render.runner === "comfy"), "BYOK: rendered by the ComfyRunner and stitched");
+  assert(byok.creditsUsed === 28, `BYOK: credits from X-Comfy-Credits-Used (${byok.creditsUsed} = 4 × 7)`);
+  assert(seen.prompts.length === 4 && seen.prompts.every((t, i) => t === byok.shots[i].render.sentPrompt), "BYOK: prompts reach Comfy byte-for-byte");
+  assert(seen.keysOnSignedUrl === 0, "BYOK: the key is not sent to the signed download URL");
+  assert(filesContaining(DATA_DIR, KEY).length === 0, "BYOK: the key is not in any stored file");
+  assert(!serverLog.includes(KEY), "BYOK: the key is not in the server log");
+
+  // A rejected key fails the shot with a clear reason, and the key is redacted
+  const bad = await upload();
+  await call("POST", `/api/projects/${bad.id}/generate`, { only: [bad.shots[0].id] }, { key: "sk-wrong-key-987654321" });
+  const failed = await settle(bad.id, { key: "sk-wrong-key-987654321" });
+  const r = failed.shots[0].render;
+  assert(r.state === "failed" && r.failReason === "Comfy API key rejected", `BYOK: a bad key fails the shot ("${r.failReason}")`);
+  assert(filesContaining(DATA_DIR, "sk-wrong-key-987654321").length === 0, "BYOK: a bad key is not stored either");
 }

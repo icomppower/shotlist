@@ -14,9 +14,38 @@ runs on the [Comfy Developer Platform](https://docs.comfy.org) and uses
 > you see that LTX refused it, and you decide what to change.
 
 > **Status:** everything works end to end with the **mock runner**, which fakes
-> each shot locally with ffmpeg. The `ComfyRunner` (real LTX renders) is written
-> but **untested**: it was built without an API key and has never been run
-> against the live Comfy API.
+> each shot locally with ffmpeg, and in **demo mode**. The `ComfyRunner` (real
+> LTX renders) is written but **untested**: it was built without an API key and
+> has only been run against a local stub of the Comfy API. The demo clips in
+> `public/demo/` are **placeholders** until `npm run demo:clips` renders the real ones.
+
+## Three ways to run it
+
+| | Who pays | What renders | Set up |
+| --- | --- | --- | --- |
+| **Demo mode** (the public link) | Nobody | Pre-made real LTX clips for the bundled sample image, trimmed to each shot and stitched live | `RUNNER=demo` (the default on Vercel). No key on the server |
+| **Bring your own key** (on the demo link) | The visitor | Anything: their own image, prompts and moves, via the `ComfyRunner` | The visitor pastes their key into **Comfy API key (renders on your credits)** |
+| **Local `RUNNER=comfy`** | You | Anything, via the `ComfyRunner` with your key | `COMFY_API_KEY` in `.env.local` on your machine |
+
+**Demo mode.** The live link holds no API key. The visitor picks the bundled
+sample image, and Generate replays the pre-made LTX clip for each shot's move
+from `public/demo/<sample>/<move>.mp4`, after a short fake delay, then stitches
+them as usual. The UI shows one line: *Demo mode — real LTX renders,
+pre-made.* A replay happens only when it is exact: the sample image, a preset
+move, and the Director prompt the clip was rendered with. An upload, a custom
+prompt or Manual mode shows *Paste a Comfy key to render your own.*
+
+**Bring your own key.** If the visitor fills the one optional key field, their
+requests use the `ComfyRunner` with their key, billed to their credits. The key:
+
+- is kept only in page memory. Nothing is written to localStorage, cookies or
+  the URL, and a reload clears it.
+- is sent only to our own server, as an `x-comfy-key` header on each request.
+- is used for that request only: never written to storage or Blob, never
+  logged, and scrubbed from error messages. The e2e test checks this.
+
+Jobs on a visitor's key are only polled while their page is open and holding
+the key. Renders on a visitor's key don't count against `DAILY_SHOT_CAP`.
 
 ## What it does
 
@@ -85,6 +114,17 @@ data directory, `MOCK_FAIL_SHOT=2` and `DAILY_SHOT_CAP=10`. It then checks that:
 - Direct mode sends the prompt byte-for-byte
 - going over the daily cap shows the demo state
 
+A second pass restarts the server with `RUNNER=demo` and no server key. It
+checks that:
+
+- the sample image replays the pre-made clips into a 14.5s cut
+- an upload or a custom prompt asks for a key
+- bring-your-own-key renders through the `ComfyRunner` against a local stub of
+  the Comfy API, so no real network calls are made
+- prompts arrive byte-for-byte and credits are read from `X-Comfy-Credits-Used`
+- a bad key fails the shot with a clear reason
+- the key never appears in stored files or the server log
+
 ### What the mock does
 
 `MockRunner` doesn't call any network service or GPU. For each shot it:
@@ -139,6 +179,24 @@ rate limit each get their own one-line reason.
 If `RUNNER=comfy` is set without `COMFY_API_KEY`, the app shows the demo
 sample instead of trying to render.
 
+### Render the demo clips (on your machine)
+
+```bash
+npm run demo:clips -- --only=slow_push_in   # one shot first: check its credit cost
+npm run demo:clips                          # all 7 moves, then the sample trailer
+```
+
+This uses `COMFY_API_KEY` from `.env.local` and starts the app with
+`RUNNER=comfy`. For each sample image it renders one 6s Director-mode shot per
+move, using the same prompt that demo mode replays. The clips go to
+`public/demo/<sample>/<move>.mp4`, and the credits for each clip and the total
+are printed. Each clip is recorded in `public/demo/<sample>/clips.json`.
+
+Once all seven moves are real renders, the script rebuilds
+`public/sample-trailer.mp4` from the starter 4-shot list. It builds the trailer
+from those clips with `RUNNER=demo`, so that step costs no credits. The demo
+line only says "real LTX renders" once `clips.json` shows every move as rendered.
+
 The workflow template has no camera-control node yet, so with Comfy the preset
 moves only steer the image through Director-mode prompt text. To get real
 camera control, map `camera.move` to a camera LoRA as shown in
@@ -148,11 +206,11 @@ camera control, map `camera.move` to a camera LoRA as shown in
 
 | Variable | Default | |
 | --- | --- | --- |
-| `RUNNER` | `mock` | `mock` or `comfy` |
-| `COMFY_API_KEY` | — | Needed for `RUNNER=comfy` |
-| `STORAGE` | `local` | `local` (files on disk) or `blob` (Vercel Blob) |
+| `RUNNER` | `mock` (`demo` on Vercel) | `mock`, `comfy` or `demo` |
+| `COMFY_API_KEY` | — | Your key for local `RUNNER=comfy` and `npm run demo:clips`. **Never set it on the public deploy** |
+| `STORAGE` | `local` (`blob` on Vercel when a Blob store is connected) | `local` (files on disk) or `blob` (Vercel Blob) |
 | `BLOB_READ_WRITE_TOKEN` | — | Needed for `STORAGE=blob` |
-| `DAILY_SHOT_CAP` | `60` | Renders allowed per UTC day across all users. Counted in storage |
+| `DAILY_SHOT_CAP` | `60` | Renders the server pays for (mock, or `RUNNER=comfy` with the server key) per UTC day. Counted in storage. Demo replays and visitors' own keys don't count |
 | `SHOTLIST_DATA_DIR` | `./.data` (`/tmp/shotlist` on Vercel) | Root folder for `STORAGE=local` |
 | `MOCK_FAIL_SHOT` | — | Mock only: refuse the first render of this shot number |
 
@@ -161,12 +219,14 @@ H.264, 0.5s crossfades.
 
 ### Live-link protection
 
-Two cases block rendering: the day's renders reach `DAILY_SHOT_CAP`, or
-`RUNNER=comfy` has no key. When either happens and there is something left to
-render, the player shows *Demo limit reached — here's a sample* and plays
-`public/sample-trailer.mp4`. A cut the user already finished stays on screen.
-The current sample is a placeholder made with the mock; replace it with a real
-LTX render.
+The public link runs in demo mode with no server key, so it can't spend
+anyone's credits. On a server that pays for renders (mock, or `RUNNER=comfy`
+with a server key), two cases block rendering: the day's renders reach
+`DAILY_SHOT_CAP`, or `RUNNER=comfy` has no key. When either happens and there is
+something left to render, the player shows *Demo limit reached — here's a
+sample* and plays `public/sample-trailer.mp4`. A cut the user already finished
+stays on screen. The current sample trailer is a placeholder made with the
+mock; `npm run demo:clips` replaces it.
 
 ## Architecture
 
@@ -178,9 +238,12 @@ src/
   lib/
     moves.ts                move catalog, modes, planner template, manual camera limits
     runners/
+      index.ts              per-request choice: visitor key → Comfy, else RUNNER (demo | comfy | mock)
       types.ts              JobRunner interface
+      demo.ts               DemoRunner: replays public/demo/<sample>/<move>.mp4
       mock.ts               MockRunner (+ MOCK_FAIL_SHOT)
       comfy.ts              ComfyRunner (Comfy Cloud API, untested)
+    samples.ts              bundled sample image(s) for demo mode
     server/
       storage/              StorageDriver: LocalStorage, BlobStorage (STORAGE=local|blob)
       pipeline.ts           render keys, submit stale shots, poll → collect clips → stitch
@@ -189,7 +252,9 @@ src/
       motion.ts             mock camera moves as ffmpeg filter graphs
       ffmpeg.ts             ffmpeg-static wrapper
 workflows/                  shotlist.json (API-format LTX graph) + shotlist.map.json (node mapping)
+public/demo/<sample>/       sample image + one pre-made clip per move (placeholders until demo:clips)
 public/sample-trailer.mp4   demo-state sample (placeholder)
+scripts/                    e2e-mock.mjs (tests), make-demo-clips.mjs (real LTX demo clips)
 ```
 
 The `JobRunner` interface is built for polling, which is how the Comfy
@@ -220,9 +285,12 @@ Comfy queue and the daily counter.
 
 ## Deploying to Vercel
 
-The project builds as a standard Next.js app. The ffmpeg binary and the
-workflow JSON are traced into the serverless functions. For a hosted deploy:
+The project builds as a standard Next.js app. The ffmpeg binary, the workflow
+JSON and the demo clips are traced into the serverless functions. For a hosted deploy:
 
+- **Run in demo mode with no server key.** Leave `RUNNER` unset (it defaults to
+  `demo` on Vercel) or set `RUNNER=demo`. **Do not set `COMFY_API_KEY`.** Visitors
+  who want their own renders paste their own key.
 - **Use shared storage.** Set `STORAGE=blob` and connect a Blob store, which
   provides `BLOB_READ_WRITE_TOKEN`. Local `/tmp` is per-instance, so projects
   would get lost between requests.
@@ -245,7 +313,9 @@ workflow JSON are traced into the serverless functions. For a hosted deploy:
 - [x] 2. `JobRunner` interface and `MockRunner` (`RUNNER=mock|comfy`)
 - [x] 3. Stitching with 0.5s crossfades, output view, per-shot regenerate
 - [x] Polish: shot failures with Edit & retry, storage drivers, daily cap and demo sample
+- [x] Demo mode (pre-made clips, no server key) and bring-your-own-key
 - [ ] 4. Verify the `ComfyRunner` and `workflows/shotlist.json` with real LTX 2.5 renders (written, untested)
+- [ ] Render the real demo clips and sample trailer with `npm run demo:clips`
 
 ## License
 

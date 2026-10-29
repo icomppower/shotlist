@@ -65,6 +65,8 @@ export interface Project {
   updatedAt: number;
   mode: Mode;
   image: { file: string; name: string; mime: string };
+  /** Bundled sample image id, when the project started from one (demo mode). */
+  sample?: string;
   shots: Shot[];
   output?: ProjectOutput;
   /** Total credits used across every submitted job. */
@@ -73,6 +75,7 @@ export interface Project {
 
 /** Project as returned by the API, with derived fields for the UI. */
 export interface ProjectView extends Project {
+  /** Server mode: mock | comfy | demo. */
   runner: string;
   shotsView: Array<{
     id: string;

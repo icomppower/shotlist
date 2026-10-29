@@ -19,10 +19,11 @@ export const DATA_DIR = process.env.SHOTLIST_DATA_DIR
 
 let driver: StorageDriver | undefined;
 
-/** Pick the driver from STORAGE=local|blob (default local). */
+/** Pick the driver from STORAGE=local|blob (default: blob on Vercel when a Blob store is connected, else local). */
 export function getStorage(): StorageDriver {
   if (driver) return driver;
-  const kind = (process.env.STORAGE ?? "local").trim().toLowerCase();
+  const fallback = process.env.VERCEL && process.env.BLOB_READ_WRITE_TOKEN ? "blob" : "local";
+  const kind = (process.env.STORAGE || fallback).trim().toLowerCase();
   if (kind === "local") driver = new LocalStorage(DATA_DIR);
   else if (kind === "blob") driver = new BlobStorage();
   else throw new Error(`Unknown STORAGE "${kind}" (expected local or blob)`);

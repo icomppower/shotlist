@@ -1,4 +1,5 @@
 import "server-only";
+import type { RunContext } from "../runners";
 import { getStorage, withLock } from "./storage";
 
 /** Global renders-per-UTC-day cap that protects a public live link. */
@@ -26,9 +27,14 @@ export async function reserveShots(n: number): Promise<boolean> {
 
 export type DemoReason = "cap" | "no-key";
 
-/** Why the app is showing the sample instead of rendering, if it is. */
-export async function demoReason(): Promise<DemoReason | null> {
-  if ((process.env.RUNNER ?? "mock").trim().toLowerCase() === "comfy" && !process.env.COMFY_API_KEY) return "no-key";
+/**
+ * Why renders are blocked and the sample is shown instead, if they are.
+ * Only renders the server pays for count against the cap: demo replays and
+ * a visitor's own key never do.
+ */
+export async function demoReason(ctx: RunContext): Promise<DemoReason | null> {
+  if (ctx.runner.name === "comfy" && !ctx.userKey && !process.env.COMFY_API_KEY) return "no-key";
+  if (!ctx.billedToServer) return null;
   return (await shotsUsedToday()) >= dailyShotCap() ? "cap" : null;
 }
 

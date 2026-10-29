@@ -4,6 +4,9 @@ import {
   isMode, isMoveId, planPrompt, type ManualCamera, type MoveId,
 } from "../moves";
 import type { Project, Shot } from "../types";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import { findSample } from "../samples";
 import { getStorage, newId, projectKey, writeProject } from "./storage";
 
 /** First-run sequence: Generate works the moment an image is dropped. */
@@ -28,20 +31,35 @@ export function newShot(move: MoveId = "slow_push_in"): Shot {
   };
 }
 
-export async function createProject(image: File): Promise<Project> {
-  const ext = IMAGE_TYPES[image.type];
-  if (!ext) throw new HttpError(415, "Upload a JPEG, PNG or WebP image.");
-  if (image.size > MAX_IMAGE_BYTES) throw new HttpError(413, "Image is larger than 20 MB.");
+/** Start a project from an upload, or from a bundled sample image (`sampleId`). */
+export async function createProject(source: File | { sampleId: string }): Promise<Project> {
   const id = newId(6);
-  const file = `source.${ext}`;
-  await getStorage().put(projectKey(id, file), Buffer.from(await image.arrayBuffer()), image.type);
+  let image: Project["image"];
+  let sample: string | undefined;
+  if (source instanceof File) {
+    const ext = IMAGE_TYPES[source.type];
+    if (!ext) throw new HttpError(415, "Upload a JPEG, PNG or WebP image.");
+    if (source.size > MAX_IMAGE_BYTES) throw new HttpError(413, "Image is larger than 20 MB.");
+    image = { file: `source.${ext}`, name: source.name.slice(0, 200) || "image", mime: source.type };
+    await getStorage().put(projectKey(id, image.file), Buffer.from(await source.arrayBuffer()), source.type);
+  } else {
+    const found = findSample(source.sampleId);
+    if (!found) throw new HttpError(404, "Unknown sample.");
+    const ext = path.extname(found.image).slice(1);
+    const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+    image = { file: `source.${ext}`, name: found.label, mime };
+    const bytes = await fs.readFile(path.join(process.cwd(), "public", found.image));
+    await getStorage().put(projectKey(id, image.file), bytes, mime);
+    sample = found.id;
+  }
   const now = Date.now();
   const project: Project = {
     id,
     createdAt: now,
     updatedAt: now,
     mode: "director",
-    image: { file, name: image.name.slice(0, 200) || "image", mime: image.type },
+    image,
+    sample,
     shots: STARTER_MOVES.map(newShot),
     creditsUsed: 0,
   };

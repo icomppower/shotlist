@@ -8,6 +8,8 @@ export interface ShotJobInput {
   shotIndex: number;
   /** 1 for the shot's first render, 2 for the next, … */
   attempt: number;
+  /** Set when the project uses a bundled sample image (demo mode). */
+  sampleId?: string;
   /** Absolute path of the uploaded source image on this server. */
   imagePath: string;
   imageMime: string;
@@ -44,6 +46,8 @@ export interface JobStatus {
  */
 export interface JobRunner {
   readonly name: string;
+  /** Optional pre-flight: a user-facing reason this shot can't be rendered here, or null. */
+  check?(input: ShotJobInput): string | null;
   submitShot(input: ShotJobInput): Promise<{ jobId: string }>;
   getStatus(jobId: string): Promise<JobStatus>;
   /**

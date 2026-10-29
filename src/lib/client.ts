@@ -8,6 +8,14 @@ export class ApiError extends Error {
   }
 }
 
+// The visitor's own Comfy key: kept in memory only (never localStorage), sent
+// to our server as a header on each request, gone on reload.
+let comfyKey = "";
+export const setComfyKey = (k: string) => {
+  comfyKey = k.trim();
+};
+const keyHeader = (): Record<string, string> => (comfyKey ? { "x-comfy-key": comfyKey } : {});
+
 async function json<T>(res: Response): Promise<T> {
   const body = (await res.json().catch(() => ({}))) as { error?: string; demo?: string };
   if (!res.ok) throw new ApiError(body.error ?? `Request failed (${res.status})`, body.demo);
@@ -15,13 +23,14 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const api = {
-  create(image: File) {
+  create(source: File | { sample: string }) {
     const form = new FormData();
-    form.append("image", image);
-    return fetch("/api/projects", { method: "POST", body: form }).then((r) => json<ProjectView>(r));
+    if (source instanceof File) form.append("image", source);
+    else form.append("sample", source.sample);
+    return fetch("/api/projects", { method: "POST", body: form, headers: keyHeader() }).then((r) => json<ProjectView>(r));
   },
   get(id: string) {
-    return fetch(`/api/projects/${id}`, { cache: "no-store" }).then((r) => json<ProjectView>(r));
+    return fetch(`/api/projects/${id}`, { cache: "no-store", headers: keyHeader() }).then((r) => json<ProjectView>(r));
   },
   update(id: string, body: { mode?: string; shots?: EditableShot[] }) {
     return fetch(`/api/projects/${id}`, {
@@ -33,7 +42,7 @@ export const api = {
   generate(id: string, opts: { force?: string[]; only?: string[] } = {}) {
     return fetch(`/api/projects/${id}/generate`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...keyHeader() },
       body: JSON.stringify(opts),
     }).then((r) => json<{ submitted: string[]; project: ProjectView }>(r));
   },

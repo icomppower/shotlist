@@ -274,3 +274,16 @@ a { color: inherit; }
   color: #ffd6d1; font-size: 0.84rem;
 }
 .small-btn { padding: 6px 11px; font-size: 0.84rem; }
+
+/* ------------------------------------------------------------------ demo mode / bring your own key */
+.key-field {
+  width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+  font-family: var(--mono); font-size: 0.85rem;
+}
+.demo-line { margin: -2px 2px 0; }
+.sample-pick {
+  margin-top: 12px; width: 100%; display: flex; align-items: center; gap: 12px; padding: 8px; text-align: left;
+  border-radius: 12px; border: 1px solid var(--line); background: var(--panel); font-weight: 600;
+}
+.sample-pick img { width: 96px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 7px; }
+.sample-pick:hover:not(:disabled) { border-color: var(--accent); }

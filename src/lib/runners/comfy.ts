@@ -15,18 +15,22 @@ import type { JobRunner, JobStatus, ShotJobInput } from "./types";
  *   outputs       GET  /api/jobs/{prompt_id}
  *   download      GET  /api/view?filename&subfolder&type   (may 302 to a signed URL)
  *
- * Auth is the X-API-Key header (COMFY_API_KEY). The workflow comes from
+ * Auth is the X-API-Key header: the visitor's own key (bring-your-own-key,
+ * held only for the request) or COMFY_API_KEY for local RUNNER=comfy. The key
+ * is never written to job records and is redacted from stored errors.
+ * The workflow comes from
  * workflows/shotlist.json; workflows/shotlist.map.json says which node inputs
  * get the image, prompt, frame count, fps, size, seed and camera move.
- * The prompt is injected byte-for-byte. At most MAX_CONCURRENT jobs run on
- * Comfy at once; the rest wait in a small queue kept in storage.
+ * The prompt is injected byte-for-byte. At most MAX_CONCURRENT jobs per
+ * project run on Comfy at once; the rest wait in a small per-project queue
+ * (per project, because each visitor's queue can only be advanced with their key).
  *
  * UNTESTED against the live API (built without a key) — see README.
  */
 
 const BASE = (process.env.COMFY_API_BASE ?? "https://cloud.comfy.org").replace(/\/+$/, "");
 const MAX_CONCURRENT = 3;
-const QUEUE_KEY = "comfy-jobs/queue.json";
+const queueKey = (projectId: string) => `comfy-jobs/queue-${projectId}.json`;
 const WORKFLOW_DIR = path.join(process.cwd(), "workflows");
 
 type Workflow = Record<string, { class_type: string; inputs: Record<string, unknown> }>;
@@ -85,15 +89,19 @@ class ComfyHttpError extends Error {
   }
 }
 
+type Queue = { active: string[]; waiting: string[] };
+
+// Workflow files are read once per process.
+let cachedFlow: Promise<{ workflow: Workflow; map: NodeMap }> | undefined;
+
 export class ComfyRunner implements JobRunner {
   readonly name = "comfy";
-  private workflow?: Workflow;
-  private map?: NodeMap;
+
+  constructor(private readonly apiKey: string) {}
 
   private key(): string {
-    const k = process.env.COMFY_API_KEY;
-    if (!k) throw new ComfyHttpError(401, "COMFY_API_KEY is not set");
-    return k;
+    if (!this.apiKey) throw new ComfyHttpError(401, "No Comfy API key");
+    return this.apiKey;
   }
 
   private async api(pathname: string, init: RequestInit = {}): Promise<Response> {
@@ -106,10 +114,12 @@ export class ComfyRunner implements JobRunner {
     return res;
   }
 
-  private async loadWorkflow(): Promise<{ workflow: Workflow; map: NodeMap }> {
-    this.workflow ??= JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, "shotlist.json"), "utf8")) as Workflow;
-    this.map ??= JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, "shotlist.map.json"), "utf8")) as NodeMap;
-    return { workflow: this.workflow, map: this.map };
+  private loadWorkflow(): Promise<{ workflow: Workflow; map: NodeMap }> {
+    cachedFlow ??= (async () => ({
+      workflow: JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, "shotlist.json"), "utf8")) as Workflow,
+      map: JSON.parse(await fs.readFile(path.join(WORKFLOW_DIR, "shotlist.map.json"), "utf8")) as NodeMap,
+    }))();
+    return cachedFlow;
   }
 
   /** Fill the mapped node inputs. The prompt goes in exactly as given. */
@@ -162,10 +172,10 @@ export class ComfyRunner implements JobRunner {
 
   // ---------------------------------------------------------------- queue
 
-  private async dispatch(): Promise<void> {
-    await withLock("comfy-dispatch", async () => {
+  private async dispatch(projectId: string): Promise<void> {
+    await withLock(`comfy-dispatch:${projectId}`, async () => {
       const storage = getStorage();
-      const q = (await storage.readJson<{ active: string[]; waiting: string[] }>(QUEUE_KEY)) ?? { active: [], waiting: [] };
+      const q = (await storage.readJson<Queue>(queueKey(projectId))) ?? { active: [], waiting: [] };
       while (q.active.length < MAX_CONCURRENT && q.waiting.length > 0) {
         const id = q.waiting.shift()!;
         const job = await storage.readJson<ComfyJob>(jobKey(id));
@@ -189,22 +199,24 @@ export class ComfyRunner implements JobRunner {
         }
         await saveJob(job);
       }
-      await storage.writeJson(QUEUE_KEY, q);
+      await storage.writeJson(queueKey(projectId), q);
     });
   }
 
-  private async release(id: string) {
-    await withLock("comfy-dispatch", async () => {
+  private async release(job: ComfyJob) {
+    const projectId = job.input.projectId;
+    await withLock(`comfy-dispatch:${projectId}`, async () => {
       const storage = getStorage();
-      const q = (await storage.readJson<{ active: string[]; waiting: string[] }>(QUEUE_KEY)) ?? { active: [], waiting: [] };
-      q.active = q.active.filter((x) => x !== id);
-      await storage.writeJson(QUEUE_KEY, q);
+      const q = (await storage.readJson<Queue>(queueKey(projectId))) ?? { active: [], waiting: [] };
+      q.active = q.active.filter((x) => x !== job.id);
+      await storage.writeJson(queueKey(projectId), q);
     });
-    await this.dispatch();
+    await this.dispatch(projectId);
   }
 
   private fail(job: ComfyJob, err: unknown) {
-    const detail = err instanceof ComfyHttpError ? err.detail : err instanceof Error ? err.message : String(err);
+    const raw = err instanceof ComfyHttpError ? err.detail : err instanceof Error ? err.message : String(err);
+    const detail = raw.split(this.apiKey || "\u0000").join("[redacted]");
     job.state = "failed";
     job.reason = classifyFailure(detail, err instanceof ComfyHttpError ? err.status : undefined);
     job.error = detail.slice(0, 2000);
@@ -221,20 +233,20 @@ export class ComfyRunner implements JobRunner {
     this.key();
     const job: ComfyJob = { id: `comfy_${newId(8)}`, input, state: "waiting", createdAt: Date.now(), credits: 0 };
     await saveJob(job);
-    await withLock("comfy-dispatch", async () => {
+    await withLock(`comfy-dispatch:${input.projectId}`, async () => {
       const storage = getStorage();
-      const q = (await storage.readJson<{ active: string[]; waiting: string[] }>(QUEUE_KEY)) ?? { active: [], waiting: [] };
+      const q = (await storage.readJson<Queue>(queueKey(input.projectId))) ?? { active: [], waiting: [] };
       q.waiting.push(job.id);
-      await storage.writeJson(QUEUE_KEY, q);
+      await storage.writeJson(queueKey(input.projectId), q);
     });
-    await this.dispatch();
+    await this.dispatch(input.projectId);
     return { jobId: job.id };
   }
 
   async getStatus(jobId: string): Promise<JobStatus> {
     const job = await this.read(jobId);
     if (job.state === "waiting") {
-      await this.dispatch();
+      await this.dispatch(job.input.projectId);
       return { state: "queued", progress: 0 };
     }
     if (job.state === "failed") return { state: "failed", progress: 0, reason: job.reason, error: job.error };
@@ -263,7 +275,7 @@ export class ComfyRunner implements JobRunner {
       this.fail(job, err);
     }
     await saveJob(job);
-    await this.release(job.id);
+    await this.release(job);
     return job.state === "done"
       ? { state: "done", progress: 1 }
       : { state: "failed", progress: 0, reason: job.reason, error: job.error };

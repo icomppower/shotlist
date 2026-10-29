@@ -9,7 +9,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "e2e:mock": "next build && node scripts/e2e-mock.mjs"
+    "e2e:mock": "next build && node scripts/e2e-mock.mjs",
+    "demo:clips": "next build && node scripts/make-demo-clips.mjs"
   },
   "dependencies": {
     "@vercel/blob": "^2.8.2",

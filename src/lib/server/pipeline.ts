@@ -4,9 +4,10 @@ import { fileURLToPath } from "node:url";
 import { after } from "next/server";
 import { CROSSFADE_SECONDS, planPrompt, type CameraParams } from "../moves";
 import type { Project, ProjectView, Shot } from "../types";
-import { getRunner } from "../runners";
+import { redact, runnerFor, runnerMode, type RunContext } from "../runners";
 import { VIDEO } from "./ffmpeg";
 import { DemoLimitError, demoReason, reserveShots } from "./limits";
+import { HttpError } from "./projects";
 import { stitchClips } from "./stitch";
 import { getStorage, hash, projectKey, scratchFile, withProject } from "./storage";
 
@@ -25,11 +26,13 @@ export function resolveCamera(p: Project, s: Shot): CameraParams {
   return p.mode === "manual" ? { kind: "manual", ...s.camera } : { kind: "preset", move: s.move };
 }
 
-/** Keyed on what is actually sent, so a mode switch that keeps the same prompt and camera re-renders nothing. */
+/**
+ * Keyed on what is actually sent, so a mode switch that keeps the same prompt
+ * and camera re-renders nothing. Not keyed on the runner: a shared link shows
+ * the same cut whether or not the viewer has a key.
+ */
 export function renderKey(p: Project, s: Shot): string {
-  return hash(
-    JSON.stringify([getRunner().name, p.image.file, resolveCamera(p, s), s.duration, resolvePrompt(p, s), s.take]),
-  );
+  return hash(JSON.stringify([p.image.file, resolveCamera(p, s), s.duration, resolvePrompt(p, s), s.take]));
 }
 
 function isFresh(p: Project, s: Shot): boolean {
@@ -45,7 +48,7 @@ export function stitchKey(p: Project): string {
   return hash([CROSSFADE_SECONDS, ...p.shots.map((s) => s.render?.clip ?? "-")].join("|"));
 }
 
-export async function toView(p: Project): Promise<ProjectView> {
+export async function toView(p: Project, ctx: RunContext): Promise<ProjectView> {
   const shotsView = p.shots.map((s) => ({
     id: s.id,
     fresh: isFresh(p, s),
@@ -56,11 +59,11 @@ export async function toView(p: Project): Promise<ProjectView> {
   const total = p.shots.reduce((t, s) => t + s.duration, 0) - CROSSFADE_SECONDS * Math.max(p.shots.length - 1, 0);
   return {
     ...p,
-    runner: getRunner().name,
+    runner: runnerMode(),
     shotsView,
     outputFresh: allFresh && p.output?.state === "done" && p.output.key === stitchKey(p),
     expectedDuration: Math.max(total, 0),
-    demo: await demoReason(),
+    demo: await demoReason(ctx),
   };
 }
 
@@ -70,8 +73,12 @@ export async function toView(p: Project): Promise<ProjectView> {
  * to date; `only`, when given, limits submission to those ids.
  * Throws DemoLimitError if the renders would exceed the daily cap.
  */
-export async function submitStale(p: Project, opts: { force?: string[]; only?: string[] } = {}): Promise<string[]> {
-  const runner = getRunner();
+export async function submitStale(
+  p: Project,
+  ctx: RunContext,
+  opts: { force?: string[]; only?: string[] } = {},
+): Promise<string[]> {
+  const { runner } = ctx;
   const force = opts.force ?? [];
   const todo = p.shots
     .map((s, index) => ({ s, index }))
@@ -83,32 +90,46 @@ export async function submitStale(p: Project, opts: { force?: string[]; only?: s
     });
   if (todo.length === 0) return [];
 
-  const why = await demoReason();
+  const why = await demoReason(ctx);
   if (why === "no-key") throw new DemoLimitError(why);
-  if (!(await reserveShots(todo.length))) throw new DemoLimitError("cap");
 
   const imagePath = await getStorage().localPath(projectKey(p.id, p.image.file));
+  const inputFor = (s: Shot, index: number) => {
+    const key = renderKey(p, s);
+    return {
+      key,
+      input: {
+        projectId: p.id,
+        shotId: s.id,
+        shotIndex: index,
+        attempt: s.renderCount + 1,
+        sampleId: p.sample,
+        imagePath,
+        imageMime: p.image.mime,
+        mode: p.mode,
+        prompt: resolvePrompt(p, s),
+        camera: resolveCamera(p, s),
+        durationSec: s.duration,
+        width: VIDEO.width,
+        height: VIDEO.height,
+        fps: VIDEO.fps,
+        seed: parseInt(key.slice(0, 8), 16),
+      },
+    };
+  };
+  // Pre-flight every shot before submitting any (e.g. demo mode can only replay).
+  for (const { s, index } of todo) {
+    const problem = runner.check?.(inputFor(s, index).input);
+    if (problem) throw new HttpError(400, problem);
+  }
+  if (ctx.billedToServer && !(await reserveShots(todo.length))) throw new DemoLimitError("cap");
+
   for (const { s, index } of todo) {
     if (force.includes(s.id)) s.take += 1;
-    const key = renderKey(p, s);
-    const prompt = resolvePrompt(p, s);
+    const { key, input } = inputFor(s, index);
+    const prompt = input.prompt;
     s.renderCount += 1;
-    const { jobId } = await runner.submitShot({
-      projectId: p.id,
-      shotId: s.id,
-      shotIndex: index,
-      attempt: s.renderCount,
-      imagePath,
-      imageMime: p.image.mime,
-      mode: p.mode,
-      prompt,
-      camera: resolveCamera(p, s),
-      durationSec: s.duration,
-      width: VIDEO.width,
-      height: VIDEO.height,
-      fps: VIDEO.fps,
-      seed: parseInt(key.slice(0, 8), 16),
-    });
+    const { jobId } = await runner.submitShot(input);
     s.render = {
       jobId, runner: runner.name, key, mode: p.mode, sentPrompt: prompt,
       state: "queued", progress: 0, submittedAt: Date.now(),
@@ -127,19 +148,21 @@ async function downloadClip(url: string): Promise<string> {
 }
 
 /** Poll in-flight jobs, collect finished clips, and kick off stitching. */
-export async function advance(p: Project): Promise<void> {
-  const runner = getRunner();
+export async function advance(p: Project, ctx: RunContext): Promise<void> {
   const storage = getStorage();
   for (const s of p.shots) {
     const r = s.render;
-    if (!r || (r.state !== "queued" && r.state !== "running") || r.runner !== runner.name) continue;
+    if (!r || (r.state !== "queued" && r.state !== "running")) continue;
+    // A job on someone's own Comfy key can only be polled by a request carrying it.
+    const runner = runnerFor(r.runner, ctx);
+    if (!runner) continue;
     try {
       const st = await runner.getStatus(r.jobId);
       r.progress = st.progress;
       if (st.state === "failed") {
         r.state = "failed";
         r.failReason = st.reason ?? "Render failed";
-        r.error = st.error ?? r.failReason;
+        r.error = redact(st.error ?? r.failReason, ctx.userKey);
       } else if (st.state === "done") {
         const clip = `clip-${s.id}-${r.key}.mp4`;
         const local = await downloadClip(await runner.getClipUrl(r.jobId));
@@ -159,7 +182,7 @@ export async function advance(p: Project): Promise<void> {
     } catch (err) {
       r.state = "failed";
       r.failReason = "Render failed";
-      r.error = err instanceof Error ? err.message : String(err);
+      r.error = redact(err instanceof Error ? err.message : String(err), ctx.userKey);
     }
   }
   maybeStitch(p);

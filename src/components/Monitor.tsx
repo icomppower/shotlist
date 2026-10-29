@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import type { ProjectView } from "@/lib/types";
 import { fileUrl, type EditableShot } from "@/lib/client";
+import type { Sample } from "@/lib/samples";
 
 /**
  * The big frame: drop zone before upload, then the source still, the
@@ -14,6 +15,7 @@ export function Monitor({
   imageUrl,
   busy,
   demo,
+  samples,
   uploading,
   onUpload,
 }: {
@@ -23,8 +25,10 @@ export function Monitor({
   busy: boolean;
   /** Renders are blocked (daily cap / no key): play the sample instead. */
   demo: boolean;
+  /** Demo mode: bundled sample images the visitor can start from. */
+  samples: Sample[];
   uploading: boolean;
-  onUpload: (f: File) => void;
+  onUpload: (f: File | { sample: string }) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
@@ -64,6 +68,13 @@ export function Monitor({
           <strong>{uploading ? "Uploading…" : "Drop an image"}</strong>
           <span className="muted">or click to choose · JPEG, PNG, WebP</span>
         </button>
+        {samples.map((s) => (
+          <button key={s.id} className="sample-pick" onClick={() => onUpload({ sample: s.id })} disabled={uploading}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={s.image} alt="" />
+            <span>Use the sample image · {s.label}</span>
+          </button>
+        ))}
         {fileInput}
       </div>
     );

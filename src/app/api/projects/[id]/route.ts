@@ -3,6 +3,7 @@ import { advance, toView } from "@/lib/server/pipeline";
 import { applyUpdate } from "@/lib/server/projects";
 import { errorResponse, notFound } from "@/lib/server/http";
 import { withProject } from "@/lib/server/storage";
+import { runContext, userKeyFrom } from "@/lib/runners";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,14 +11,18 @@ export const maxDuration = 60;
 
 type Ctx = { params: Promise<{ id: string }> };
 
-/** Read a project. Also advances its render jobs (poll-driven pipeline). */
-export async function GET(_req: Request, { params }: Ctx) {
+/**
+ * Read a project. Also advances its render jobs (poll-driven pipeline).
+ * An `x-comfy-key` header lets jobs on the visitor's own key be polled.
+ */
+export async function GET(req: Request, { params }: Ctx) {
+  const ctx = runContext(userKeyFrom(req));
   try {
     const { id } = await params;
-    const res = await withProject(id, advance);
-    return res ? NextResponse.json(await toView(res.project)) : notFound();
+    const res = await withProject(id, (p) => advance(p, ctx));
+    return res ? NextResponse.json(await toView(res.project, ctx)) : notFound();
   } catch (err) {
-    return errorResponse(err);
+    return errorResponse(err, ctx.userKey);
   }
 }
 
@@ -27,7 +32,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
     const { id } = await params;
     const body = await req.json().catch(() => ({}));
     const res = await withProject(id, (p) => applyUpdate(p, body));
-    return res ? NextResponse.json(await toView(res.project)) : notFound();
+    return res ? NextResponse.json(await toView(res.project, runContext(userKeyFrom(req)))) : notFound();
   } catch (err) {
     return errorResponse(err);
   }
