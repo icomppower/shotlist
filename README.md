@@ -358,6 +358,20 @@ JSON and the demo clips are traced into the serverless functions. For a hosted d
 - [ffmpeg-static](https://www.npmjs.com/package/ffmpeg-static): mock renders and crossfade stitching
 - [Vercel](https://vercel.com): hosting
 - [Vercel Blob](https://vercel.com/docs/vercel-blob): shared storage for hosted deploys
+- [ElevenLabs](https://elevenlabs.io) text-to-speech API: the demo video's narration only (not part of the app)
+
+### Voiceover generated with ElevenLabs API (`voiceover.py`)
+
+The narration on the demo video is `narration.txt` read by an ElevenLabs premade voice in one API call, then muxed onto the silent screen recording with ffmpeg:
+
+```bash
+pip install requests            # ffmpeg + ffprobe must be on PATH
+export ELEVENLABS_API_KEY=...   # never committed
+python voiceover.py --list-voices
+python voiceover.py --text narration.txt --voice VOICE_ID --video demo.mp4 --out final_with_voiceover.mp4
+```
+
+The script speeds the narration up (at most 1.12×) to fit the video, and `--mix` keeps the video's own audio underneath at 25%.
 
 ## Roadmap
 
@@ -366,9 +380,9 @@ JSON and the demo clips are traced into the serverless functions. For a hosted d
 - [x] 3. Stitching with 0.5s crossfades, output view, per-shot regenerate
 - [x] Polish: shot failures with Edit & retry, storage drivers, daily cap and demo sample
 - [x] Demo mode (pre-made clips, no server key) and bring-your-own-key
-- [ ] 4. Verify the `ComfyRunner` and `workflows/shotlist.json` with real LTX 2.5 renders (written, untested)
+- [x] 4. `ComfyRunner` and `workflows/shotlist.json` verified with real LTX 2.5 renders on Comfy Cloud
 - [x] Text only: describe a scene; shot 1 renders text-to-video, and its last frame drives shots 2+
-- [ ] Render the real demo clips and sample trailer with `npm run demo:clips`
+- [x] Real demo clips and sample trailer rendered with `npm run demo:clips`
 
 ## License
 

@@ -19,3 +19,8 @@ next-env.d.ts
 .DS_Store
 .vercel
 npm-debug.log*
+
+# voiceover.py output (ElevenLabs narration, regenerated on demand)
+narration.mp3
+narration_fit.mp3
+final_with_voiceover.mp4

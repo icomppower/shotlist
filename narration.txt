@@ -1,0 +1,9 @@
+This is Shotlist, an open-source rebuild of Higgsfield's Cinema Studio, built on the Comfy Developer Platform with LTX 2.5 as the only video model.
+
+Two modes. Text to video: describe a scene, and shot one is an LTX text-to-video render, sent exactly as you typed it. Its last frame becomes the source still, and every following shot animates from it, so the scene stays consistent.
+
+Image to video: drop in a picture, pick director moves, crash zoom, dolly zoom, crane reveal, whip pan, and press Generate. Each shot is its own LTX render on Comfy Cloud, stitched into one trailer.
+
+Change one move, and only that shot re-renders.
+
+Every shot is a ComfyUI workflow in the repo. This narration was generated with the ElevenLabs API. MIT licensed. Clone it and make your own.
