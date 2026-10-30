@@ -61,6 +61,16 @@ export interface ProjectOutput {
   finishedAt?: number;
 }
 
+/** Output sizes, all multiples of 32 as LTX requires; the first is the default. Smaller = fewer credits. */
+export const SIZES = ["1280x704", "960x544", "768x416"] as const;
+export type Size = (typeof SIZES)[number];
+export const DEFAULT_SIZE: Size = SIZES[0];
+export const isSize = (v: unknown): v is Size => SIZES.includes(v as Size);
+export function sizeDims(size: Size | undefined): { width: number; height: number } {
+  const [width, height] = (size ?? DEFAULT_SIZE).split("x").map(Number);
+  return { width, height };
+}
+
 export interface Project {
   id: string;
   createdAt: number;
@@ -77,6 +87,8 @@ export interface Project {
   frameOf?: string;
   /** Bundled sample id, when the project started from one (demo mode). */
   sample?: string;
+  /** Output size for every shot and the stitched video; missing = DEFAULT_SIZE. */
+  size?: Size;
   shots: Shot[];
   output?: ProjectOutput;
   /** Total credits used across every submitted job. */

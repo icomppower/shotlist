@@ -23,7 +23,7 @@ const PORT = Number(process.env.E2E_PORT ?? 3199);
 let BASE = `http://localhost:${PORT}`;
 let DATA_DIR = mkdtempSync(path.join(tmpdir(), "shotlist-e2e-"));
 const FAIL_SHOT = 2;
-const CAP = 10; // renders below: 4 + 1 retry + 1 swap + 1 direct = 7, then 4 more must be refused
+const CAP = 14; // renders below: 4 + 1 retry + 1 swap + 4 size change + 1 direct = 11, then 4 more must be refused, 3 fit exactly
 
 const log = (...a) => console.log("•", ...a);
 let server;
@@ -114,7 +114,12 @@ async function fetchDuration(id, file) {
     err = e.stderr.toString();
   }
   const m = err.match(/Duration:\s*(\d+):(\d+):(\d+\.\d+)/);
-  return { isMp4: buf.subarray(4, 8).toString() === "ftyp", duration: m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : NaN };
+  const wh = err.match(/Video:.*?, (\d{2,5})x(\d{2,5})[ ,]/);
+  return {
+    isMp4: buf.subarray(4, 8).toString() === "ftyp",
+    duration: m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : NaN,
+    size: wh ? `${wh[1]}x${wh[2]}` : "",
+  };
 }
 
 async function upload() {
@@ -181,6 +186,18 @@ try {
   assert(p.outputFresh && p.output.file !== firstFile, "a new stitched file was produced");
   file = await fetchDuration(id, p.output.file);
   assert(Math.abs(file.duration - 14.5) < 0.15, `re-stitched duration ${file.duration.toFixed(2)}s`);
+  assert(file.size === "1280x704", `default output size ${file.size}`);
+
+  // 4b. Change the output size -> every shot re-renders, stitched at that size
+  p = await call("PATCH", `/api/projects/${id}`, { size: "768x416" });
+  assert(p.size === "768x416" && !p.outputFresh, "size change makes the output stale");
+  p = await call("PATCH", `/api/projects/${id}`, { size: "640x360" });
+  assert(p.size === "768x416", "unknown size is ignored");
+  g = await call("POST", `/api/projects/${id}/generate`, {});
+  assert(g.submitted.length === p.shots.length, "size change re-renders every shot");
+  p = await settle(id);
+  file = await fetchDuration(id, p.output.file);
+  assert(p.outputFresh && file.size === "768x416", `stitched at ${file.size}`);
 
   // 5. Reorder -> re-stitch only ---------------------------------------------
   const order = p.shots.map((s) => s.renderCount).join(",");
@@ -206,7 +223,7 @@ try {
 
   // 7. Daily cap -> demo state ---------------------------------------------
   const usage = JSON.parse(readFileSync(path.join(DATA_DIR, "usage", `${new Date().toISOString().slice(0, 10)}.json`), "utf8"));
-  assert(usage.shots === 7, `usage counted in storage: ${usage.shots} renders today`);
+  assert(usage.shots === 11, `usage counted in storage: ${usage.shots} renders today`);
   const p2 = await upload();
   g = await call("POST", `/api/projects/${p2.id}/generate`, {}, { allow: [429] });
   assert(g.status === 429 && g.demo === "cap", `over DAILY_SHOT_CAP=${CAP}: generate refused with demo state`);

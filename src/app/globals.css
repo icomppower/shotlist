@@ -287,6 +287,12 @@ a { color: inherit; }
   padding: 10px 12px; font-size: 0.92rem;
 }
 .vibe-field:focus { border-color: var(--accent); outline: none; }
+/* Generate: output size (the one field) */
+.size-field {
+  margin-left: auto; background: var(--bg); color: var(--muted); border: 1px solid var(--line); border-radius: 8px;
+  padding: 4px 8px; font-size: 0.8rem;
+}
+.size-field:focus { border-color: var(--accent); outline: none; }
 /* Shot cards: shared trailing prompt words collapsed behind "…" */
 .ellipsis {
   background: none; border: 1px solid var(--line); border-radius: 6px; padding: 0 6px; line-height: 1.2;

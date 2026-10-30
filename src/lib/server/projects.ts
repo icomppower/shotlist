@@ -3,7 +3,7 @@ import {
   DEFAULT_DURATION, DEFAULT_MANUAL_CAMERA, MANUAL_LIMITS, MAX_DURATION, MIN_DURATION,
   isMode, isMoveId, planPrompt, type ManualCamera, type MoveId,
 } from "../moves";
-import type { Project, Shot } from "../types";
+import { isSize, type Project, type Shot } from "../types";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { findSample, findSceneSample } from "../samples";
@@ -111,7 +111,8 @@ const str = (v: unknown, max: number, fallback: string) => (typeof v === "string
  * new shots, missing ids are deleted. Prompt text is stored exactly as sent.
  */
 export function applyUpdate(p: Project, body: unknown) {
-  const b = (body && typeof body === "object" ? body : {}) as { mode?: unknown; shots?: unknown };
+  const b = (body && typeof body === "object" ? body : {}) as { mode?: unknown; shots?: unknown; size?: unknown };
+  if (isSize(b.size)) p.size = b.size; // changes every render key: all shots re-render at the new size
 
   if (Array.isArray(b.shots)) {
     const byId = new Map(p.shots.map((s) => [s.id, s]));

@@ -7,7 +7,11 @@ import { ENCODE_ARGS, VIDEO, probeDuration, runFfmpeg } from "./ffmpeg";
  * Concatenate clips with CROSSFADE_SECONDS crossfades into one MP4.
  * Offsets are computed from each clip's real duration so the chain never drifts.
  */
-export async function stitchClips(clips: string[], outFile: string): Promise<number> {
+export async function stitchClips(
+  clips: string[],
+  outFile: string,
+  size: { width: number; height: number } = VIDEO,
+): Promise<number> {
   if (clips.length === 0) throw new Error("nothing to stitch");
   const part = `${outFile}.part.mp4`;
   const durations = await Promise.all(clips.map(probeDuration));
@@ -17,7 +21,7 @@ export async function stitchClips(clips: string[], outFile: string): Promise<num
   } else {
     const xf = CROSSFADE_SECONDS;
     const norm = clips
-      .map((_, i) => `[${i}:v]fps=${VIDEO.fps},scale=${VIDEO.width}:${VIDEO.height},setsar=1,format=yuv420p,settb=AVTB[c${i}]`)
+      .map((_, i) => `[${i}:v]fps=${VIDEO.fps},scale=${size.width}:${size.height},setsar=1,format=yuv420p,settb=AVTB[c${i}]`)
       .join(";");
     const chain: string[] = [];
     let prev = "c0";

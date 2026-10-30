@@ -61,8 +61,9 @@ the key. Renders on a visitor's key don't count against `DAILY_SHOT_CAP`.
 2. **Shot list.** Drag ⋮⋮ to reorder. Tap a shot to swap its move: each move is a
    card with a small looping preview played on your own image. Each shot is
    3–6 seconds long. Add up to 12 shots, or remove them.
-3. **Generate.** A progress strip shows one tile per shot, and each tile fills
-   as its shot finishes. You then get a large player, **Download MP4** and
+3. **Generate.** Pick the output size (1280×704, 960×544 or 768×416; smaller
+   costs fewer credits, and changing it re-renders every shot). A progress strip
+   shows one tile per shot, and each tile fills as its shot finishes. You then get a large player, **Download MP4** and
    **Copy share link** (`/p/<id>`).
 4. **Change one shot.** Pick a different move (or ↻ New take) and the button
    becomes *Update video · re-render 1 shot*. Only that shot re-renders, and the

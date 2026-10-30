@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import type { ProjectView } from "@/lib/types";
+import { DEFAULT_SIZE, type ProjectView } from "@/lib/types";
 import { fileUrl, type EditableShot } from "@/lib/client";
 import type { Sample } from "@/lib/samples";
 
@@ -172,7 +172,7 @@ export function Monitor({
         <button className="btn ghost" onClick={() => input.current?.click()} disabled={uploading}>
           {uploading ? "Uploading…" : "Replace image"}
         </button>
-        {out?.duration && <span className="muted mono small">{out.duration.toFixed(1)}s · 1280×704</span>}
+        {out?.duration && <span className="muted mono small">{out.duration.toFixed(1)}s · {(view.size ?? DEFAULT_SIZE).replace("x", "×")}</span>}
         {fileInput}
       </div>
       {out?.state === "failed" && <p className="error-inline">Stitch failed: {out.error}</p>}

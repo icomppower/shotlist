@@ -5,7 +5,7 @@ import {
   DEFAULT_MANUAL_CAMERA, MAX_DURATION, MIN_DURATION, MODES, MODE_LABELS, MOVES, planPrompt,
   type Mode, type MoveId,
 } from "@/lib/moves";
-import type { ProjectView } from "@/lib/types";
+import { DEFAULT_SIZE, SIZES, type ProjectView, type Size } from "@/lib/types";
 import { ApiError, api, clientId, fileUrl, setComfyKey, toEditable, type EditableShot } from "@/lib/client";
 import { DEMO_T2V_MOVE, DEMO_T2V_SECONDS, type Sample } from "@/lib/samples";
 import { planVibe } from "@/lib/planner";
@@ -45,9 +45,12 @@ export function Studio({
   // Shot cards: shared trailing words of "Sent to LTX:" collapsed behind "…".
   const [showTail, setShowTail] = useState(false);
 
+  // Output size: one field; changing it re-renders every shot.
+  const [size, setSize] = useState<Size>(DEFAULT_SIZE);
+
   const id = view?.id;
-  const latest = useRef({ shots, mode });
-  latest.current = { shots, mode };
+  const latest = useRef({ shots, mode, size });
+  latest.current = { shots, mode, size };
 
   // ---------------------------------------------------------------- loading
   const adopt = useCallback((v: ProjectView, editable = true) => {
@@ -55,6 +58,7 @@ export function Studio({
     if (editable) {
       setShots(v.shots.map(toEditable));
       setMode(v.mode);
+      setSize(v.size ?? DEFAULT_SIZE);
     }
   }, []);
 
@@ -470,6 +474,20 @@ export function Studio({
               <div className="step-head compact">
                 <h2><span className="step">3</span> Generate</h2>
                 {view.creditsUsed > 0 && <span className="muted mono">{view.creditsUsed} credits used</span>}
+                <select
+                  className="size-field mono"
+                  aria-label="Output size"
+                  value={size}
+                  disabled={busy}
+                  onChange={(e) => {
+                    const s = e.target.value as Size;
+                    setSize(s);
+                    latest.current.size = s;
+                    void flush();
+                  }}
+                >
+                  {SIZES.map((s) => <option key={s} value={s}>{s.replace("x", "×")}</option>)}
+                </select>
               </div>
               {serverMode === "demo" && (
                 <>

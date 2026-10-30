@@ -40,7 +40,7 @@ export const api = {
   get(id: string) {
     return fetch(`/api/projects/${id}`, { cache: "no-store", headers: keyHeader() }).then((r) => json<ProjectView>(r));
   },
-  update(id: string, body: { mode?: string; shots?: EditableShot[] }) {
+  update(id: string, body: { mode?: string; size?: string; shots?: EditableShot[] }) {
     return fetch(`/api/projects/${id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },

@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { after } from "next/server";
 import { CROSSFADE_SECONDS, manualCameraPhrase, planPrompt, type CameraParams } from "../moves";
-import type { Project, ProjectView, Shot } from "../types";
+import { DEFAULT_SIZE, sizeDims, type Project, type ProjectView, type Shot } from "../types";
 import { redact, runnerFor, runnerMode, type RunContext } from "../runners";
 import { VIDEO, extractLastFrame } from "./ffmpeg";
 import { DemoLimitError, demoReason, reserveShots } from "./limits";
@@ -53,7 +53,7 @@ export function renderKey(p: Project, s: Shot, index: number): string {
   // A t2v shot has no image; every other shot depends on the reference still,
   // which for a text-only project is shot 1's last frame (named by its render key).
   const source = isT2V(p, index) ? ["t2v"] : [p.image?.file ?? "-"];
-  return hash(JSON.stringify([...source, resolveCamera(p, s), s.duration, resolvePrompt(p, s, index), s.take]));
+  return hash(JSON.stringify([...source, resolveCamera(p, s), s.duration, resolvePrompt(p, s, index), s.take, p.size ?? DEFAULT_SIZE]));
 }
 
 /** The reference still exists and (text-only) matches shot 1's current render. */
@@ -144,8 +144,7 @@ export async function submitStale(
         prompt: resolvePrompt(p, s, index),
         camera: resolveCamera(p, s),
         durationSec: s.duration,
-        width: VIDEO.width,
-        height: VIDEO.height,
+        ...sizeDims(p.size),
         fps: VIDEO.fps,
         seed: parseInt(key.slice(0, 8), 16),
       },
@@ -278,7 +277,7 @@ function maybeStitch(p: Project) {
     try {
       const clips = await Promise.all(clipKeys.map((k) => storage.localPath(k)));
       const out = await scratchFile("stitch.mp4");
-      const duration = await stitchClips(clips, out);
+      const duration = await stitchClips(clips, out, sizeDims(p.size));
       await storage.put(projectKey(p.id, file), { path: out }, "video/mp4");
       result = { duration };
     } catch (err) {
