@@ -1,23 +1,24 @@
 # Shotlist
 
-**Turn one still image into a directed, multi-shot video.** Upload an image, build a
-shot list of camera moves, hit Generate. Each shot becomes a clip, and the clips
-are joined with 0.5s crossfades into one MP4.
+**Shotlist turns one image, or one sentence, into a short cinematic trailer.**
 
-Shotlist is an open-source rebuild of the idea behind Higgsfield's Cinema Studio
-(it has its own name and look, and contains no Higgsfield code, branding or assets). It
-runs on the [Comfy Developer Platform](https://docs.comfy.org) and uses
-**LTX 2.5** as its core image-to-video model.
+1. Drop an image or describe a scene.
+2. Shotlist fills in four camera shots: push-in, orbit, crash zoom, crane reveal.
+   Change any move, or type a vibe like "horror trailer" to get a different set.
+3. Click Generate. Each shot renders with LTX 2.5 on Comfy Cloud, and the clips
+   are stitched into one video.
 
-> **Design principle: the video model is the only judge — Direct mode sends your words as written.**
-> Shotlist never rewrites, filters or pads your prompt. If LTX refuses a shot,
-> you see that LTX refused it, and you decide what to change.
+Don't like one shot? Change it and only that shot re-renders.
 
-> **Status:** everything works end to end with the **mock runner**, which fakes
-> each shot locally with ffmpeg, and in **demo mode**. The `ComfyRunner` (real
-> LTX renders) is written but **untested**: it was built without an API key and
-> has only been run against a local stub of the Comfy API. The demo clips in
-> `public/demo/` are **placeholders** until `npm run demo:clips` renders the real ones.
+Every shot shows exactly what was sent to LTX. Edit it and your words go through
+as typed. No hidden rewriting.
+
+No tutorial. One screen, one model, one click.
+
+Built with ComfyUI (Comfy Cloud API), LTX 2.5, Next.js, ffmpeg and Vercel.
+MIT licensed. Inspired by Higgsfield's Cinema Studio; not affiliated.
+
+**Live:** https://shotlist-one-khaki.vercel.app
 
 ## Three ways to run it
 
@@ -183,9 +184,6 @@ back as *Refused by LTX*, so you can try the failure and retry path.
 
 ## Run it with Comfy on your own machine
 
-> Untested: the runner follows the [Comfy Cloud API docs](https://docs.comfy.org/development/cloud/api-reference),
-> but it has never been run against the live API.
-
 1. **Get an API key** at [platform.comfy.org](https://platform.comfy.org). Create
    it in the workspace whose credits you want to spend (keys belong to a
    workspace). Comfy says API access needs a paid plan.
@@ -278,8 +276,7 @@ with a server key), two cases block rendering: the day's renders reach
 `DAILY_SHOT_CAP`, or `RUNNER=comfy` has no key. When either happens and there is
 something left to render, the player shows *Demo limit reached — here's a
 sample* and plays `public/sample-trailer.mp4`. A cut the user already finished
-stays on screen. The current sample trailer is a placeholder made with the
-mock; `npm run demo:clips` replaces it.
+stays on screen. The sample trailer is built from real LTX clips by `npm run demo:clips`.
 
 ## Architecture
 
@@ -295,7 +292,7 @@ src/
       types.ts              JobRunner interface
       demo.ts               DemoRunner: replays public/demo/<sample>/<move>.mp4
       mock.ts               MockRunner (+ MOCK_FAIL_SHOT)
-      comfy.ts              ComfyRunner (Comfy Cloud API, untested)
+      comfy.ts              ComfyRunner (Comfy Cloud API)
     samples.ts              bundled sample image(s) for demo mode
     server/
       storage/              StorageDriver: LocalStorage, BlobStorage (STORAGE=local|blob)
@@ -305,8 +302,8 @@ src/
       motion.ts             mock camera moves as ffmpeg filter graphs
       ffmpeg.ts             ffmpeg-static wrapper
 workflows/                  shotlist.json + .map.json (image-to-video), shotlist-t2v.json + .map.json (text-to-video, shot 1 of a text-only project)
-public/demo/<sample>/       sample image + one pre-made clip per move (placeholders until demo:clips)
-public/sample-trailer.mp4   demo-state sample (placeholder)
+public/demo/<sample>/       sample image + one pre-made real LTX clip per move (from demo:clips)
+public/sample-trailer.mp4   demo-state sample trailer
 scripts/                    e2e-mock.mjs (tests), make-demo-clips.mjs (real LTX demo clips)
 ```
 
