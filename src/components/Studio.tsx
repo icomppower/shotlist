@@ -434,7 +434,12 @@ export function Studio({
 
                     {r?.state === "failed" && st && !st.inFlight && (
                       <p className="failed-line" role="alert">
-                        <span>{r.failReason ?? "Render failed"} — the video won’t stitch until this shot is fixed.</span>
+                        <span>
+                          {r.failReason ?? "Render failed"}
+                          {/* Comfy's own words, so the reason is never a guess. */}
+                          {r.error && r.error !== r.failReason && <> — “{r.error.slice(0, 160)}{r.error.length > 160 ? "…" : ""}”</>}
+                          . The video won’t stitch until this shot is fixed.
+                        </span>
                         <button
                           className="btn small-btn"
                           disabled={busyAction !== null || demo}

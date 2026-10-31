@@ -95,7 +95,10 @@ export function ltxFrames(durationSec: number, fps: number): number {
 export function classifyFailure(detail: string, status?: number): string {
   if (/moderat|content.?polic|refus|safety|nsfw|flagged|prohibited|not allowed/i.test(detail)) return "Refused by LTX";
   if (status === 401 || status === 403) return "Comfy API key rejected";
-  if (status === 402 || /credit|insufficient|balance/i.test(detail)) return "Out of Comfy credits";
+  // Only a real payment error: Comfy messages can mention "credits" for other reasons.
+  if (status === 402 || /(insufficient|not enough|out of|no)\s+(credits?|balance|funds)|payment required/i.test(detail)) {
+    return "Out of Comfy credits";
+  }
   if (status === 429) return "Comfy rate limit — try again shortly";
   return "Render failed";
 }
@@ -418,7 +421,7 @@ export class ComfyRunner implements JobRunner {
     if (fromStatus) return typeof fromStatus === "string" ? fromStatus : JSON.stringify(fromStatus);
     try {
       const d = await this.jobDetails(job);
-      return JSON.stringify(d.error ?? d.status ?? d).slice(0, 2000);
+      return JSON.stringify(d.error_message ?? d.error ?? d.execution_error ?? d.status ?? d).slice(0, 2000);
     } catch {
       return "Comfy job failed";
     }

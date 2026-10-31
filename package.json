@@ -10,7 +10,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "e2e:mock": "next build && node scripts/e2e-mock.mjs",
-    "demo:clips": "next build && node scripts/make-demo-clips.mjs"
+    "demo:clips": "next build && node scripts/make-demo-clips.mjs",
+    "comfy:smoke": "node scripts/comfy-smoke.mjs"
   },
   "dependencies": {
     "@vercel/blob": "^2.8.2",
