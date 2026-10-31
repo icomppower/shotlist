@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { after } from "next/server";
 import { CROSSFADE_SECONDS, manualCameraPhrase, planPrompt, type CameraParams } from "../moves";
 import { DEFAULT_SIZE, sizeDims, type Project, type ProjectView, type Shot } from "../types";
-import { redact, runnerFor, runnerMode, sampleReplayRunner, type RunContext } from "../runners";
+import { redact, runnerFor, runnerMode, type RunContext } from "../runners";
 import { VIDEO, extractLastFrame } from "./ffmpeg";
 import { DemoLimitError, demoReason, reserveShots } from "./limits";
 import { HttpError } from "./projects";
@@ -108,6 +108,7 @@ export async function submitStale(
   ctx: RunContext,
   opts: { force?: string[]; only?: string[] } = {},
 ): Promise<string[]> {
+  const { runner } = ctx;
   const force = opts.force ?? [];
   const todo = p.shots
     .map((s, index) => ({ s, index }))
@@ -120,6 +121,9 @@ export async function submitStale(
     // Image-to-video needs the reference still; for text-only projects that is shot 1's last frame.
     .filter(({ index }) => isT2V(p, index) || frameReady(p));
   if (todo.length === 0) return [];
+
+  const why = await demoReason(ctx);
+  if (why === "no-key") throw new DemoLimitError(why);
 
   const imagePath = p.image ? await getStorage().localPath(projectKey(p.id, p.image.file)) : undefined;
   const inputFor = (s: Shot, index: number) => {
@@ -146,20 +150,6 @@ export async function submitStale(
       },
     };
   };
-  // A bundled sample whose shots all match pre-made LTX clips always replays
-  // them, whatever RUNNER is: free, instant, and never touches the server key
-  // or the shared credit balance. A visitor's own key still renders for real.
-  if (!ctx.userKey && ctx.runner.name !== "demo" && p.sample) {
-    const demo = sampleReplayRunner();
-    if (todo.every(({ s, index }) => !demo.check?.(inputFor(s, index).input))) {
-      ctx = { runner: demo, billedToServer: false };
-    }
-  }
-  const { runner } = ctx;
-
-  const why = await demoReason(ctx);
-  if (why === "no-key") throw new DemoLimitError(why);
-
   // Pre-flight every shot before submitting any (e.g. demo mode can only replay).
   for (const { s, index } of todo) {
     const problem = runner.check?.(inputFor(s, index).input);

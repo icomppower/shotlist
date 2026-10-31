@@ -9,6 +9,5 @@ export const dynamic = "force-dynamic";
 export default async function Home() {
   const mode = runnerMode();
   const real = (await Promise.all(SAMPLES.map((s) => demoClipsAreReal(s.id)))).every(Boolean);
-  // Samples replay pre-made LTX clips in every mode, so offer them whenever those clips are real.
-  return <Studio mode={mode} samples={mode === "demo" || real ? SAMPLES : []} demoReal={real} />;
+  return <Studio mode={mode} samples={mode === "demo" ? SAMPLES : []} demoReal={real} />;
 }

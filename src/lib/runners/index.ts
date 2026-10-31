@@ -21,11 +21,6 @@ export function runnerMode(): RunnerMode {
 const mock = new MockRunner();
 const demo = new DemoRunner();
 
-/** The pre-made-clip runner, used for bundled samples in every mode. */
-export function sampleReplayRunner(): JobRunner {
-  return demo;
-}
-
 /**
  * Who renders for this request. A visitor's own key (bring-your-own-key)
  * always means Comfy on their credits; it lives only in this request.
