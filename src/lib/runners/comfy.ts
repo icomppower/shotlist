@@ -200,10 +200,19 @@ export class ComfyRunner implements JobRunner {
     await withLock(`comfy-dispatch:${projectId}`, async () => {
       const storage = getStorage();
       const q = (await storage.readJson<Queue>(queueKey(projectId))) ?? { active: [], waiting: [] };
+      if (q.waiting.length > 0 && q.active.length >= MAX_CONCURRENT) await this.freeFinishedSlots(q);
       while (q.active.length < MAX_CONCURRENT && q.waiting.length > 0) {
         const id = q.waiting.shift()!;
         const job = await storage.readJson<ComfyJob>(jobKey(id));
         if (!job || job.state !== "waiting") continue;
+        // A newer job for the same shot is queued behind this one: this one is
+        // stale (e.g. queued before cancel() existed), so never pay for it.
+        const newer = await Promise.all(q.waiting.map((w) => storage.readJson<ComfyJob>(jobKey(w))));
+        if (newer.some((n) => n?.state === "waiting" && n.input.shotId === job.input.shotId)) {
+          this.supersede(job);
+          await saveJob(job);
+          continue;
+        }
         try {
           const image = await this.uploadImage(job.input);
           const prompt = await this.buildPrompt(job.input, image);
@@ -225,6 +234,50 @@ export class ComfyRunner implements JobRunner {
         await saveJob(job);
       }
       await storage.writeJson(queueKey(projectId), q);
+    });
+  }
+
+  /**
+   * Slots are only given back when someone polls the job. A job whose shot was
+   * re-submitted is never polled again, so check the real status of every
+   * active job and drop the ones Comfy has finished (or that no longer exist).
+   */
+  private async freeFinishedSlots(q: Queue) {
+    const storage = getStorage();
+    const keep: string[] = [];
+    for (const id of q.active) {
+      const job = await storage.readJson<ComfyJob>(jobKey(id));
+      if (!job || job.state !== "submitted" || !job.promptId) continue;
+      try {
+        const res = await this.api(`/api/job/${encodeURIComponent(job.promptId)}/status`);
+        const status = String(((await res.json()) as { status?: string }).status ?? "").toLowerCase();
+        if (DONE_STATES.includes(status) || FAILED_STATES.includes(status)) continue; // finished on Comfy: slot is free
+      } catch (err) {
+        if (err instanceof ComfyHttpError && err.status === 404) continue; // unknown to Comfy: slot is free
+      }
+      keep.push(id);
+    }
+    q.active = keep;
+  }
+
+  private supersede(job: ComfyJob) {
+    job.state = "failed";
+    job.reason = "Replaced by a newer render";
+    job.error = "Superseded before it was sent to Comfy.";
+  }
+
+  /** The shot was re-submitted: drop this job if it hasn't been sent to Comfy yet. */
+  async cancel(jobId: string): Promise<void> {
+    const job = await this.read(jobId).catch(() => null);
+    if (!job || job.state !== "waiting") return; // already running: its slot frees once Comfy finishes it
+    const projectId = job.input.projectId;
+    await withLock(`comfy-dispatch:${projectId}`, async () => {
+      const storage = getStorage();
+      const q = (await storage.readJson<Queue>(queueKey(projectId))) ?? { active: [], waiting: [] };
+      q.waiting = q.waiting.filter((x) => x !== job.id);
+      await storage.writeJson(queueKey(projectId), q);
+      this.supersede(job);
+      await saveJob(job);
     });
   }
 

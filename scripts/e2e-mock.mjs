@@ -448,6 +448,21 @@ async function demoSuite() {
   assert(filesContaining(DATA_DIR, KEY).length === 0, "BYOK: the key is not in any stored file");
   assert(!serverLog.includes(KEY), "BYOK: the key is not in the server log");
 
+  // Re-rendering every shot while its Comfy jobs are still in flight must not
+  // leave the project stuck: replaced jobs give back their render slots, and a
+  // replaced job that never started is not sent to Comfy at all.
+  const busyProject = await upload();
+  const sentBefore = seen.prompts.length;
+  g = await call("POST", `/api/projects/${busyProject.id}/generate`, {}, { key: KEY });
+  assert(g.submitted.length === 4, "BYOK re-render: first take of 4 shots submitted (3 run, 1 waits)");
+  const swapped = busyProject.shots.map((s) => ({ ...s, move: s.move === "whip_pan" ? "fpv_dive" : "whip_pan" }));
+  await call("PATCH", `/api/projects/${busyProject.id}`, { shots: swapped }, { key: KEY });
+  g = await call("POST", `/api/projects/${busyProject.id}/generate`, {}, { key: KEY });
+  assert(g.submitted.length === 4, "BYOK re-render: all 4 shots re-submitted before the first take finished");
+  const rerendered = await settle(busyProject.id, { key: KEY, timeoutMs: 60_000 });
+  assert(rerendered.outputFresh, "BYOK re-render: the new take renders and stitches (no stuck queue)");
+  assert(seen.prompts.length - sentBefore === 7, `BYOK re-render: the replaced job that never started was not sent (${seen.prompts.length - sentBefore} = 3 + 4 prompts)`);
+
   // A rejected key fails the shot with a clear reason, and the key is redacted
   const bad = await upload();
   await call("POST", `/api/projects/${bad.id}/generate`, { only: [bad.shots[0].id] }, { key: "sk-wrong-key-987654321" });

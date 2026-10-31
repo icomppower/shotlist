@@ -54,6 +54,8 @@ export interface JobRunner {
   /** Optional pre-flight: a user-facing reason this shot can't be rendered here, or null. */
   check?(input: ShotJobInput): string | null;
   submitShot(input: ShotJobInput): Promise<{ jobId: string }>;
+  /** Optional: the shot was re-submitted, so this job's result is no longer wanted. */
+  cancel?(jobId: string): Promise<void>;
   getStatus(jobId: string): Promise<JobStatus>;
   /**
    * Where to fetch the finished clip: an http(s) URL or a file:// URL on this

@@ -162,6 +162,11 @@ export async function submitStale(
     const { key, input } = inputFor(s, index);
     const prompt = input.prompt;
     s.renderCount += 1;
+    // The old job's result will never be collected: let its runner drop it.
+    const prev = s.render;
+    if (prev && (prev.state === "queued" || prev.state === "running")) {
+      await runnerFor(prev.runner, ctx)?.cancel?.(prev.jobId).catch(() => {});
+    }
     const { jobId } = await runner.submitShot(input);
     s.render = {
       jobId, runner: runner.name, key, mode: p.mode, sentPrompt: prompt,
