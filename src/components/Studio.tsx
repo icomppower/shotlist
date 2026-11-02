@@ -411,7 +411,7 @@ export function Studio({
                       </p>
                     )}
 
-                    {(() => {
+                    {!open && (() => {
                       const prompt = sentNow(s, i);
                       return (
                         <p className="sent" onClick={() => setOpenShot(s.id)} title="Tap to edit">
