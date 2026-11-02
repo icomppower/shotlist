@@ -1,4 +1,4 @@
-import type { CameraParams, Mode } from "../moves";
+import type { CameraParams } from "../moves";
 
 /** Everything a runner needs to render one shot into one clip. */
 export interface ShotJobInput {
@@ -18,7 +18,6 @@ export interface ShotJobInput {
   /** Absolute path of the reference image on this server (i2v only). */
   imagePath?: string;
   imageMime?: string;
-  mode: Mode;
   /**
    * The prompt to send, final and exact. Runners MUST pass it through
    * byte-for-byte: no rewriting, no added style or camera words.

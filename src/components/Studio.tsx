@@ -1,11 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  DEFAULT_MANUAL_CAMERA, MAX_DURATION, MIN_DURATION, MODES, MODE_LABELS, MOVES, planPrompt,
-  type Mode, type MoveId,
-} from "@/lib/moves";
-import { DEFAULT_SIZE, SIZES, type ProjectView, type Size } from "@/lib/types";
+import { MAX_DURATION, MIN_DURATION, MOVES, planPrompt, type MoveId } from "@/lib/moves";
+import type { ProjectView } from "@/lib/types";
 import { ApiError, api, clientId, fileUrl, setComfyKey, toEditable, type EditableShot } from "@/lib/client";
 import { DEMO_T2V_MOVE, DEMO_T2V_SECONDS, type Sample } from "@/lib/samples";
 import { planVibe } from "@/lib/planner";
@@ -32,7 +29,6 @@ export function Studio({
 }) {
   const [view, setView] = useState<ProjectView | null>(null);
   const [shots, setShots] = useState<EditableShot[]>([]);
-  const [mode, setMode] = useState<Mode>("director");
   const [openShot, setOpenShot] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<"upload" | "generate" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -40,25 +36,20 @@ export function Studio({
   const [demoHit, setDemoHit] = useState(false);
   // Bring-your-own-key: React state + client.ts memory only.
   const [userKey, setUserKey] = useState("");
-  // Director mode: "Describe the vibe" field; Enter fills the shot list.
+  // "What should it feel like?" field; Enter fills the shot list.
   const [vibe, setVibe] = useState("");
   // Shot cards: shared trailing words of "Sent to LTX:" collapsed behind "…".
   const [showTail, setShowTail] = useState(false);
 
-  // Output size: one field; changing it re-renders every shot.
-  const [size, setSize] = useState<Size>(DEFAULT_SIZE);
-
   const id = view?.id;
-  const latest = useRef({ shots, mode, size });
-  latest.current = { shots, mode, size };
+  const latest = useRef({ shots });
+  latest.current = { shots };
 
   // ---------------------------------------------------------------- loading
   const adopt = useCallback((v: ProjectView, editable = true) => {
     setView(v);
     if (editable) {
       setShots(v.shots.map(toEditable));
-      setMode(v.mode);
-      setSize(v.size ?? DEFAULT_SIZE);
     }
   }, []);
 
@@ -74,13 +65,11 @@ export function Studio({
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saving = useRef<Promise<unknown>>(Promise.resolve());
 
-  const flush = useCallback(async (opts: { adoptEdits?: boolean } = {}) => {
+  const flush = useCallback(async () => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = null;
     if (!id) return;
-    const run = saving.current.then(() =>
-      api.update(id, latest.current).then((v) => adopt(v, !!opts.adoptEdits)),
-    );
+    const run = saving.current.then(() => api.update(id, latest.current).then((v) => adopt(v, false)));
     saving.current = run.catch((e: Error) => setError(e.message));
     await saving.current;
   }, [id, adopt]);
@@ -99,16 +88,16 @@ export function Studio({
     scheduleSave();
   }, [scheduleSave]);
 
+  /** A prompt that still equals the planner's text follows a move change; an edited prompt is left alone. */
   const patchShot = (sid: string, patch: Partial<EditableShot>) =>
-    editShots((all) => all.map((s) => (s.id === sid ? { ...s, ...patch } : s)));
-
-  const switchMode = async (m: Mode) => {
-    if (m === mode) return;
-    setMode(m);
-    latest.current.mode = m;
-    // Server seeds Direct/Manual prompts from the planner; take them back.
-    await flush({ adoptEdits: true });
-  };
+    editShots((all) =>
+      all.map((s) => {
+        if (s.id !== sid) return s;
+        const next = { ...s, ...patch };
+        if (patch.prompt === undefined && s.prompt === planPrompt(s.move, s.shotNote)) next.prompt = planPrompt(next.move, next.shotNote);
+        return next;
+      }),
+    );
 
   // ---------------------------------------------------------------- polling
   const busy = !!view && (view.shotsView.some((s) => s.inFlight) || view.output?.state === "stitching");
@@ -126,7 +115,7 @@ export function Studio({
     setBusyAction("upload");
     try {
       const fresh = await api.create(file);
-      // Replacing the image keeps the current shot list and mode.
+      // Replacing the image keeps the current shot list.
       const v = view ? await api.update(fresh.id, latest.current) : fresh;
       adopt(v);
       window.history.replaceState(null, "", `/p/${v.id}`);
@@ -155,26 +144,21 @@ export function Studio({
 
   const addShot = () => {
     const move: MoveId = "slow_push_in";
-    const s: EditableShot = {
-      id: clientId(), move, camera: { ...DEFAULT_MANUAL_CAMERA }, duration: 4, note: "", shotNote: "",
-      prompt: mode === "director" ? "" : planPrompt(move, ""),
-    };
+    const s: EditableShot = { id: clientId(), move, duration: 4, shotNote: "", prompt: planPrompt(move) };
     editShots((all) => [...all, s]);
     setOpenShot(s.id);
   };
 
-  /** Director vibe: the planner picks move, duration and shot note; the user's notes stay as typed. */
+  /** The planner picks move, duration and prompt for each shot; every prompt stays editable. */
   const applyVibe = () => {
     const plan = planVibe(vibe);
     editShots((all) =>
       plan.map((p, i) => ({
         id: all[i]?.id ?? clientId(),
-        camera: all[i]?.camera ?? { ...DEFAULT_MANUAL_CAMERA },
-        note: all[i]?.note ?? "",
-        prompt: all[i]?.prompt ?? "",
         move: p.move,
         duration: p.duration,
         shotNote: p.shot_note,
+        prompt: planPrompt(p.move, p.shot_note),
       })),
     );
     setOpenShot(null);
@@ -235,16 +219,19 @@ export function Studio({
   const total = shots.reduce((t, s) => t + s.duration, 0) - 0.5 * Math.max(shots.length - 1, 0);
 
   const stale = view ? view.shotsView.filter((s) => !s.fresh && !s.inFlight).length : 0;
-  // Words every rendered shot's prompt ends with (the shared planner tail), so cards show only the move-specific part.
+  // Shot 1 of a text-only project sends the scene; the others send their prompt.
+  const sentNow = (s: EditableShot, i: number) => (view?.scene && i === 0 ? view.scene : s.prompt);
+  // Words every shot's prompt ends with (the shared planner tail), so cards show only the move-specific part.
   const sharedTail = useMemo(() => {
-    const sent = (view?.shots ?? []).map((s) => s.render?.sentPrompt).filter((p): p is string => !!p);
+    const sent = shots.map(sentNow).filter((p) => !!p);
     if (sent.length < 2) return "";
     const words = sent.map((p) => p.split(" "));
     const n = Math.min(...words.map((w) => w.length)) - 1; // never swallow a whole prompt
     let k = 0;
     while (k < n && words.every((w) => w[w.length - 1 - k] === words[0][words[0].length - 1 - k])) k++;
     return k >= 3 ? words[0].slice(words[0].length - k).join(" ") : "";
-  }, [view]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shots, view?.scene]);
   const hasOutput = !!view?.output?.file;
   let cta = "Generate video";
   // Demo mode without a key can only replay pre-made clips: a sample image,
@@ -254,11 +241,9 @@ export function Studio({
     demoMode &&
     (!view?.sample ||
       shots.some((s, i) =>
-        mode === "manual"
-          ? true
-          : view.scene && i === 0
-            ? s.move !== DEMO_T2V_MOVE || s.duration !== DEMO_T2V_SECONDS // shot 1 = the pre-made text-to-video shot
-            : (mode === "director" ? planPrompt(s.move, s.note, s.shotNote) : s.prompt) !== planPrompt(s.move, ""),
+        view.scene && i === 0
+          ? s.move !== DEMO_T2V_MOVE || s.duration !== DEMO_T2V_SECONDS // shot 1 = the pre-made text-to-video shot
+          : s.prompt !== planPrompt(s.move),
       ));
 
   // Blocked renders show the sample — but never over the user's own finished cut.
@@ -288,22 +273,6 @@ export function Studio({
           <Logo />
           <span>Shotlist</span>
         </a>
-        {view && (
-          <div className="modes" role="tablist" aria-label="Mode">
-            {MODES.map((m) => (
-              <button
-                key={m}
-                role="tab"
-                aria-selected={mode === m}
-                className={mode === m ? "on" : ""}
-                onClick={() => void switchMode(m)}
-                title={MODE_LABELS[m].hint}
-              >
-                {MODE_LABELS[m].label}
-              </button>
-            ))}
-          </div>
-        )}
         {view && (
           <span className="badge" title={`RUNNER=${view.runner}`}>
             {view.runner === "mock"
@@ -341,20 +310,18 @@ export function Studio({
               <h2><span className="step">2</span> Shot list</h2>
               <span className="muted mono">{shots.length} shots · {total.toFixed(1)}s</span>
             </div>
-            <p className="muted hint">{MODE_LABELS[mode].hint} Drag ⋮⋮ to reorder, tap a shot to change it.</p>
-            {mode === "director" && (
-              <input
-                className="vibe-field"
-                aria-label="Describe the vibe"
-                placeholder="Describe the vibe (e.g. horror trailer) ↵"
+            <p className="muted hint">Drag ⋮⋮ to reorder, tap a shot to change it. What you type is what LTX gets.</p>
+            <input
+              className="vibe-field"
+              aria-label="What should it feel like?"
+              placeholder="What should it feel like? (e.g. horror trailer) ↵"
                 value={vibe}
                 disabled={busy}
                 onChange={(e) => setVibe(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && vibe.trim()) applyVibe();
                 }}
-              />
-            )}
+            />
 
             <ol className="shots">
               {shots.map((s, i) => {
@@ -386,15 +353,9 @@ export function Studio({
                         ⋮⋮
                       </button>
                       <button className="shot-main" onClick={() => setOpenShot(open ? null : s.id)} aria-expanded={open}>
-                        <MovePreview
-                          move={s.move}
-                          manual={mode === "manual" ? s.camera : undefined}
-                          image={imageUrl}
-                          className="thumb"
-                        />
+                        <MovePreview move={s.move} image={imageUrl} className="thumb" />
                         <span className="shot-title">
-                          <span className="mono muted">#{i + 1}</span>{" "}
-                          {mode === "manual" ? `${s.camera.zoomStart.toFixed(2)}→${s.camera.zoomEnd.toFixed(2)}×` : MOVES[s.move].label}
+                          <span className="mono muted">#{i + 1}</span> {MOVES[s.move].label}
                         </span>
                         <ShotStatus fresh={st?.fresh} inFlight={st?.inFlight} progress={r?.progress} failed={r?.state === "failed"} rendered={!!r} />
                       </button>
@@ -424,7 +385,7 @@ export function Studio({
                     {open && (
                       <ShotEditor
                         shot={s}
-                        mode={mode}
+                        sceneShot={!!view.scene && i === 0}
                         imageUrl={imageUrl}
                         canRetake={!!st?.fresh && !busy}
                         onChange={(patch) => patchShot(s.id, patch)}
@@ -450,22 +411,25 @@ export function Studio({
                       </p>
                     )}
 
-                    {r && (
-                      <p className="sent">
-                        <span className="sent-label">Sent to LTX:</span>{" "}
-                        {r.sentPrompt === "" ? (
-                          <code>(empty prompt)</code>
-                        ) : sharedTail && r.sentPrompt.endsWith(sharedTail) && !showTail ? (
-                          <>
-                            <code>{r.sentPrompt.slice(0, r.sentPrompt.length - sharedTail.length).trimEnd()}</code>{" "}
-                            <button className="ellipsis" onClick={() => setShowTail(true)} title={sharedTail} aria-label="Show the shared words">…</button>
-                          </>
-                        ) : (
-                          <code>{r.sentPrompt}</code>
-                        )}
-                        {st && !st.fresh && !st.inFlight && r.state !== "failed" && <span className="changed"> · changed, re-sends on next generate</span>}
-                      </p>
-                    )}
+                    {(() => {
+                      const prompt = sentNow(s, i);
+                      return (
+                        <p className="sent" onClick={() => setOpenShot(s.id)} title="Tap to edit">
+                          <span className="sent-label">Sent to LTX:</span>{" "}
+                          {prompt === "" ? (
+                            <code>(empty prompt)</code>
+                          ) : sharedTail && prompt.endsWith(sharedTail) && !showTail ? (
+                            <>
+                              <code>{prompt.slice(0, prompt.length - sharedTail.length).trimEnd()}</code>{" "}
+                              <button className="ellipsis" onClick={(e) => { e.stopPropagation(); setShowTail(true); }} title={sharedTail} aria-label="Show the shared words">…</button>
+                            </>
+                          ) : (
+                            <code>{prompt}</code>
+                          )}
+                          {r && st && !st.fresh && !st.inFlight && r.state !== "failed" && <span className="changed"> · changed, re-sends on next generate</span>}
+                        </p>
+                      );
+                    })()}
                   </li>
                 );
               })}
@@ -479,20 +443,6 @@ export function Studio({
               <div className="step-head compact">
                 <h2><span className="step">3</span> Generate</h2>
                 {view.creditsUsed > 0 && <span className="muted mono">{view.creditsUsed} credits used</span>}
-                <select
-                  className="size-field mono"
-                  aria-label="Output size"
-                  value={size}
-                  disabled={busy}
-                  onChange={(e) => {
-                    const s = e.target.value as Size;
-                    setSize(s);
-                    latest.current.size = s;
-                    void flush();
-                  }}
-                >
-                  {SIZES.map((s) => <option key={s} value={s}>{s.replace("x", "×")}</option>)}
-                </select>
               </div>
               {serverMode === "demo" && (
                 <>

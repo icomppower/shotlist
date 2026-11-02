@@ -46,8 +46,7 @@ const WORKFLOW_DIR = path.join(process.cwd(), "workflows");
 type Workflow = Record<string, { class_type: string; inputs: Record<string, unknown> }>;
 
 type Source =
-  | "image" | "prompt" | "frames" | "fps" | "width" | "height" | "seed" | "duration"
-  | "camera.move" | "camera.zoomStart" | "camera.zoomEnd" | "camera.panX" | "camera.panY" | "camera.roll";
+  | "image" | "prompt" | "frames" | "fps" | "width" | "height" | "seed" | "duration" | "camera.move";
 
 interface NodeMap {
   inputs: Array<{
@@ -161,13 +160,7 @@ export class ComfyRunner implements JobRunner {
       height: input.height,
       seed: input.seed,
       duration: input.durationSec,
-      "camera.move": cam.kind === "preset" ? cam.move : undefined,
-      ...(cam.kind === "manual"
-        ? {
-            "camera.zoomStart": cam.zoomStart, "camera.zoomEnd": cam.zoomEnd,
-            "camera.panX": cam.panX, "camera.panY": cam.panY, "camera.roll": cam.roll,
-          }
-        : {}),
+      "camera.move": cam.move,
     };
     for (const m of map.inputs) {
       const node = graph[m.node];

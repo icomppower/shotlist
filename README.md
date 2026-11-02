@@ -2,6 +2,8 @@
 
 **Shotlist turns one image, or one sentence, into a short cinematic trailer.**
 
+> Live demo replays real LTX 2.5 renders. Paste your own Comfy key to render your own.
+
 1. Drop an image or describe a scene.
 2. Shotlist fills in four camera shots: push-in, orbit, crash zoom, crane reveal.
    Change any move, or type a vibe like "horror trailer" to get a different set.
@@ -11,12 +13,13 @@
 Don't like one shot? Change it and only that shot re-renders.
 
 Every shot shows exactly what was sent to LTX. Edit it and your words go through
-as typed. No hidden rewriting.
+as typed. No hidden rewriting. The video model is the only judge — what you type
+is what LTX gets.
 
 No tutorial. One screen, one model, one click.
 
 Built with ComfyUI (Comfy Cloud API), LTX 2.5, Next.js, ffmpeg and Vercel.
-MIT licensed. Inspired by Higgsfield's Cinema Studio; not affiliated.
+MIT licensed. Independent project; not affiliated with or endorsed by Higgsfield.
 
 **Live:** https://shotlist-one-khaki.vercel.app
 
@@ -33,8 +36,8 @@ sample image, and Generate replays the pre-made LTX clip for each shot's move
 from `public/demo/<sample>/<move>.mp4`, after a short fake delay, then stitches
 them as usual. The UI shows one line: *Demo mode — real LTX renders,
 pre-made.* A replay happens only when it is exact: the sample image, a preset
-move, and the Director prompt the clip was rendered with. An upload, a custom
-prompt or Manual mode shows *Paste a Comfy key to render your own.*
+move, and the prompt the clip was rendered with (the planner's text for that
+move). An upload or an edited prompt shows *Paste a Comfy key to render your own.*
 
 In demo mode, the scene box comes pre-filled with the bundled sample scene, so
 pressing Enter works right away. Shot 1 replays the pre-made text-to-video
@@ -59,30 +62,35 @@ the key. Renders on a visitor's key don't count against `DAILY_SHOT_CAP`.
    (slow push-in → bullet-time orbit → crash zoom → crane reveal), so Generate
    works immediately. Type a scene into **Describe a scene** and press Enter to
    start with no image (see *Text only* below).
-2. **Shot list.** Drag ⋮⋮ to reorder. Tap a shot to swap its move: each move is a
-   card with a small looping preview played on your own image. Each shot is
-   3–6 seconds long. Add up to 12 shots, or remove them.
-3. **Generate.** Pick the output size (1280×704, 960×544 or 768×416; smaller
-   costs fewer credits, and changing it re-renders every shot). A progress strip
-   shows one tile per shot, and each tile fills as its shot finishes. You then get a large player, **Download MP4** and
-   **Copy share link** (`/p/<id>`).
-4. **Change one shot.** Pick a different move (or ↻ New take) and the button
-   becomes *Update video · re-render 1 shot*. Only that shot re-renders, and the
-   video is stitched again. Reordering only re-stitches; no shots re-render.
-5. **If a shot fails**, its tile says why (for example *Refused by LTX* or
+2. **Shot list.** Type what it should feel like (e.g. *horror trailer*) and press
+   Enter to get a different set of shots. Drag ⋮⋮ to reorder. Tap a shot to swap
+   its move: each move is a card with a small looping preview played on your own
+   image. Each shot is 3–6 seconds long. Add up to 12 shots, or remove them.
+3. **Every shot shows its prompt** under **Sent to LTX:**. It starts as the
+   planner's text for the move and follows the move until you edit it. Tap it to
+   edit; your text is then sent byte-for-byte, and changing the move no longer
+   touches it. There is no LLM and no rewriting anywhere.
+4. **Generate.** A progress strip shows one tile per shot, and each tile fills as
+   its shot finishes. You then get a large player, **Download MP4** and
+   **Copy share link** (`/p/<id>`). Output is 1280×704, 24 fps, 0.5s crossfades.
+5. **Change one shot.** Pick a different move, edit its prompt, or ↻ New take, and
+   the button becomes *Update video · re-render 1 shot*. Only that shot
+   re-renders, and the video is stitched again. Reordering only re-stitches.
+6. **If a shot fails**, its tile says why (for example *Refused by LTX* or
    *Render failed*) and **Edit & retry** re-renders only that shot. Nothing is
    stitched while any shot is failed, so no shot is ever skipped silently.
 
-Director moves: **crash zoom, dolly zoom, bullet-time orbit, FPV drone dive,
-crane reveal, whip pan, slow push-in.**
+Moves: **crash zoom, dolly zoom, bullet-time orbit, FPV drone dive, crane
+reveal, whip pan, slow push-in.** Comfy Cloud has no camera LoRA for LTX 2.5,
+so a move travels as the camera wording in the planner's prompt.
 
 ### Text only (no image)
 
 With a scene and no image:
 
 1. **Shot 1 renders text-to-video** using `workflows/shotlist-t2v.json`. The
-   scene text is its prompt, sent exactly as typed: the Direct-mode rule, so
-   nothing is rewritten or added. It also goes to the server as JSON, because
+   scene text is its prompt, sent exactly as typed, so nothing is rewritten or
+   added. It also goes to the server as JSON, because
    multipart encoding would change its line breaks.
 2. **Shot 1's last frame becomes the source still.** It is extracted with
    ffmpeg-static and shown on the monitor where an uploaded image would be.
@@ -93,22 +101,10 @@ Changing shot 1 changes the frame, so every later shot re-renders to match it.
 Changing any other shot re-renders only that shot. If you upload an image, all
 of this is skipped and the app behaves exactly as before.
 
-### Modes: Director | Direct | Manual
-
-| Mode | Camera | Prompt sent to the model |
-| --- | --- | --- |
-| **Director** (default) | Preset move | Built by the planner: a fixed template (no LLM) that combines your optional scene note with the move's camera wording |
-| **Direct** | Preset move | **Your text, byte-for-byte.** Nothing is rewritten and no style words are added. The move only sets camera parameters |
-| **Manual** | Your numbers: zoom start/end, pan X/Y, roll | Your text, byte-for-byte |
-
-When you switch from Director to Direct or Manual, each shot keeps the planner's
-prompt as editable starting text. Under every rendered shot, a **Sent to LTX:**
-line shows the exact string that was submitted. The same string is also logged
-in the job JSON (`mock-jobs/<jobId>.json` or `comfy-jobs/<jobId>.json` →
-`input.prompt`).
-
-A render is keyed on what is actually sent (prompt, camera, duration, take,
-image). Switching modes without changing that content therefore re-renders nothing.
+The exact string that was submitted is also logged in the job JSON
+(`mock-jobs/<jobId>.json` or `comfy-jobs/<jobId>.json` → `input.prompt`). A
+render is keyed on what is actually sent (prompt, camera move, duration, take,
+image), so saving without changing that content re-renders nothing.
 
 ## Run it locally (mock runner)
 
@@ -129,15 +125,15 @@ npm run e2e:mock
 ```
 
 This builds the app and starts its own server on port 3199, with a throwaway
-data directory, `MOCK_FAIL_SHOT=2` and `DAILY_SHOT_CAP=10`. It then checks that:
+data directory, `MOCK_FAIL_SHOT=2` and `DAILY_SHOT_CAP=11`. It then checks that:
 
 - the upload pre-fills 4 shots
 - shot 2 is refused and nothing is stitched until it is fixed
 - **Edit & retry** re-renders only shot 2
 - the stitched MP4 is 14.5s long (4×4s with three 0.5s crossfades)
-- swapping one move re-renders only that shot
+- swapping one move re-renders only that shot, and an unedited prompt follows the move
 - reordering only re-stitches
-- Direct mode sends the prompt byte-for-byte
+- an edited prompt is sent byte-for-byte, and a later move change leaves it alone
 - going over the daily cap shows the demo state
 
 A text-only pass then checks that:
@@ -229,8 +225,8 @@ npm run demo:clips                                              # everything, th
 ```
 
 This uses `COMFY_API_KEY` from `.env.local` and starts the app with
-`RUNNER=comfy`. For each sample image it renders one 6s Director-mode shot per
-move, using the same prompt that demo mode replays.
+`RUNNER=comfy`. For each sample image it renders one 6s shot per move with the
+planner's prompt for that move, the same prompt that demo mode replays.
 
 For the sample scene (`harbor-light`), the script runs the text-only path:
 
@@ -248,10 +244,9 @@ Once all seven moves are real renders, the script rebuilds
 from those clips with `RUNNER=demo`, so that step costs no credits. The demo
 line only says "real LTX renders" once `clips.json` shows every move as rendered.
 
-The workflow template has no camera-control node yet, so with Comfy the preset
-moves only steer the image through Director-mode prompt text. To get real
-camera control, map `camera.move` to a camera LoRA as shown in
-`workflows/README.md`.
+The workflow template has no camera-control node, so with Comfy the preset
+moves steer the image through the prompt text. To get real camera control, map
+`camera.move` to a camera LoRA as shown in `workflows/README.md`.
 
 ## Configuration
 
@@ -265,7 +260,7 @@ camera control, map `camera.move` to a camera LoRA as shown in
 | `SHOTLIST_DATA_DIR` | `./.data` (`/tmp/shotlist` on Vercel) | Root folder for `STORAGE=local` |
 | `MOCK_FAIL_SHOT` | — | Mock only: refuse the first render of this shot number |
 
-There is no settings page; the app uses sensible defaults: 1280×720, 24 fps,
+There is no settings page; the app uses fixed defaults: 1280×704, 24 fps,
 H.264, 0.5s crossfades.
 
 ### Live-link protection
@@ -286,7 +281,8 @@ src/
     api/projects/…          create · get (advances jobs) · patch · generate · files (Range)
   components/               Studio, Monitor (drop zone / player / progress strip), ShotEditor, MovePreview
   lib/
-    moves.ts                move catalog, modes, planner template, manual camera limits
+    moves.ts                move catalog and the planner's prompt template
+    planner.ts              "what should it feel like" → shot list (deterministic, no LLM)
     runners/
       index.ts              per-request choice: visitor key → Comfy, else RUNNER (demo | comfy | mock)
       types.ts              JobRunner interface

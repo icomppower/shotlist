@@ -1,4 +1,4 @@
-// Director-mode vibe planner. Deterministic, no LLM, no key: works in demo
+// Vibe planner. Deterministic, no LLM, no key: works in demo
 // mode and on the public link. Turns "horror trailer" into a shot list of
 // [{ move, duration, shot_note }]. The user's own words are never rewritten —
 // the final prompt is assembled in code as `note + " " + shot_note`.

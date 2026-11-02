@@ -1,6 +1,6 @@
 import type { ProjectView, Shot } from "./types";
 
-export type EditableShot = Pick<Shot, "id" | "move" | "camera" | "duration" | "note" | "shotNote" | "prompt">;
+export type EditableShot = Pick<Shot, "id" | "move" | "duration" | "shotNote" | "prompt">;
 
 export class ApiError extends Error {
   constructor(message: string, public demo?: string) {
@@ -40,7 +40,7 @@ export const api = {
   get(id: string) {
     return fetch(`/api/projects/${id}`, { cache: "no-store", headers: keyHeader() }).then((r) => json<ProjectView>(r));
   },
-  update(id: string, body: { mode?: string; size?: string; shots?: EditableShot[] }) {
+  update(id: string, body: { shots?: EditableShot[] }) {
     return fetch(`/api/projects/${id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -65,5 +65,5 @@ export function clientId(): string {
 }
 
 export const toEditable = (s: Shot): EditableShot => ({
-  id: s.id, move: s.move, camera: s.camera, duration: s.duration, note: s.note, shotNote: s.shotNote ?? "", prompt: s.prompt,
+  id: s.id, move: s.move, duration: s.duration, shotNote: s.shotNote ?? "", prompt: s.prompt,
 });

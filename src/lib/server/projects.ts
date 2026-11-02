@@ -1,9 +1,6 @@
 import "server-only";
-import {
-  DEFAULT_DURATION, DEFAULT_MANUAL_CAMERA, MANUAL_LIMITS, MAX_DURATION, MIN_DURATION,
-  isMode, isMoveId, planPrompt, type ManualCamera, type MoveId,
-} from "../moves";
-import { isSize, type Project, type Shot } from "../types";
+import { DEFAULT_DURATION, MAX_DURATION, MIN_DURATION, isMoveId, planPrompt, type MoveId } from "../moves";
+import type { Project, Shot } from "../types";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { findSample, findSceneSample } from "../samples";
@@ -21,12 +18,9 @@ export function newShot(move: MoveId = "slow_push_in"): Shot {
   return {
     id: newId(4),
     move,
-    camera: { ...DEFAULT_MANUAL_CAMERA },
     duration: DEFAULT_DURATION,
-    note: "",
     shotNote: "",
-    prompt: "",
-    promptSeeded: false,
+    prompt: planPrompt(move),
     take: 0,
     renderCount: 0,
   };
@@ -70,7 +64,6 @@ export async function createProject(source: File | { sampleId: string } | { scen
     id,
     createdAt: now,
     updatedAt: now,
-    mode: "director",
     image,
     scene,
     sample,
@@ -92,59 +85,33 @@ const clamp = (v: unknown, min: number, max: number, fallback: number) => {
   return Math.min(max, Math.max(min, n));
 };
 
-function readCamera(v: unknown, prev: ManualCamera): ManualCamera {
-  const c = (v && typeof v === "object" ? v : {}) as Partial<ManualCamera>;
-  const { zoom, pan, roll } = MANUAL_LIMITS;
-  return {
-    zoomStart: clamp(c.zoomStart, zoom.min, zoom.max, prev.zoomStart),
-    zoomEnd: clamp(c.zoomEnd, zoom.min, zoom.max, prev.zoomEnd),
-    panX: clamp(c.panX, pan.min, pan.max, prev.panX),
-    panY: clamp(c.panY, pan.min, pan.max, prev.panY),
-    roll: Math.round(clamp(c.roll, roll.min, roll.max, prev.roll)),
-  };
-}
-
 const str = (v: unknown, max: number, fallback: string) => (typeof v === "string" ? v.slice(0, max) : fallback);
 
 /**
  * Apply an editor update. `shots` is the full ordered list; unknown ids are
  * new shots, missing ids are deleted. Prompt text is stored exactly as sent.
+ * A prompt that still equals the planner's text follows a move change; an
+ * edited prompt is never touched.
  */
 export function applyUpdate(p: Project, body: unknown) {
-  const b = (body && typeof body === "object" ? body : {}) as { mode?: unknown; shots?: unknown; size?: unknown };
-  if (isSize(b.size)) p.size = b.size; // changes every render key: all shots re-render at the new size
-
-  if (Array.isArray(b.shots)) {
-    const byId = new Map(p.shots.map((s) => [s.id, s]));
-    p.shots = b.shots.slice(0, MAX_SHOTS).map((raw) => {
-      const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-      const known = typeof r.id === "string" ? byId.get(r.id) : undefined;
-      const prev = known ?? { ...newShot(), id: typeof r.id === "string" && SHOT_ID_RE.test(r.id) ? r.id : newId(4) };
-      const prompt = str(r.prompt, 4000, prev.prompt);
-      return {
-        ...prev,
-        move: isMoveId(r.move) ? r.move : prev.move,
-        camera: r.camera === undefined ? prev.camera : readCamera(r.camera, prev.camera),
-        duration: Math.round(clamp(r.duration, MIN_DURATION, MAX_DURATION, prev.duration)),
-        note: str(r.note, 1000, prev.note),
-        shotNote: str(r.shotNote, 1000, prev.shotNote ?? ""),
-        prompt,
-        promptSeeded: prompt === prev.prompt ? prev.promptSeeded : false,
-      };
-    });
-  }
-
-  if (isMode(b.mode) && b.mode !== p.mode) {
-    // Leaving Director: the planner's prompts become editable starting text,
-    // without clobbering anything the user already typed.
-    if (p.mode === "director") {
-      for (const s of p.shots) {
-        if (s.prompt === "" || s.promptSeeded) {
-          s.prompt = planPrompt(s.move, s.note, s.shotNote);
-          s.promptSeeded = true;
-        }
-      }
-    }
-    p.mode = b.mode;
-  }
+  const b = (body && typeof body === "object" ? body : {}) as { shots?: unknown };
+  if (!Array.isArray(b.shots)) return;
+  const byId = new Map(p.shots.map((s) => [s.id, s]));
+  p.shots = b.shots.slice(0, MAX_SHOTS).map((raw) => {
+    const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+    const known = typeof r.id === "string" ? byId.get(r.id) : undefined;
+    const prev = known ?? { ...newShot(), id: typeof r.id === "string" && SHOT_ID_RE.test(r.id) ? r.id : newId(4) };
+    const move = isMoveId(r.move) ? r.move : prev.move;
+    const shotNote = str(r.shotNote, 1000, prev.shotNote ?? "");
+    let prompt = str(r.prompt, 4000, prev.prompt);
+    const seeded = prev.prompt === "" || prev.prompt === planPrompt(prev.move, prev.shotNote);
+    if (prompt === prev.prompt && seeded) prompt = planPrompt(move, shotNote);
+    return {
+      ...prev,
+      move,
+      duration: Math.round(clamp(r.duration, MIN_DURATION, MAX_DURATION, prev.duration)),
+      shotNote,
+      prompt,
+    };
+  });
 }

@@ -1,5 +1,5 @@
 import "server-only";
-import type { CameraParams, ManualCamera, MoveId } from "../moves";
+import type { CameraParams, MoveId } from "../moves";
 import { VIDEO } from "./ffmpeg";
 
 /**
@@ -47,22 +47,7 @@ const prep = `[0:v]scale=${SRC_W}:${SRC_H}:force_original_aspect_ratio=increase,
 const out = `format=yuv420p[v]`;
 
 export function buildMotionFilter(camera: CameraParams, duration: number): string {
-  return camera.kind === "manual" ? manualFilter(camera, duration) : presetFilter(camera.move, duration);
-}
-
-function manualFilter(c: ManualCamera, duration: number): string {
-  const frames = Math.round(duration * VIDEO.fps);
-  const curve = {
-    z: `${c.zoomStart}+${c.zoomEnd - c.zoomStart}*{s}`,
-    cx: `0.5+${0.5 * c.panX}*{s}`,
-    cy: `0.5+${0.5 * c.panY}*{s}`,
-  };
-  if (c.roll === 0) return `${prep},${zoompan(curve, frames, VIDEO.width, VIDEO.height)},${out}`;
-  const rad = (c.roll * Math.PI) / 180;
-  return (
-    `${prep},${zoompan(curve, frames, ROLL_W, ROLL_H)},` +
-    `${roll((p) => `${rad.toFixed(4)}*(${p}*${p}*(3-2*${p}))`, duration)},${out}`
-  );
+  return presetFilter(camera.move, duration);
 }
 
 function presetFilter(move: MoveId, duration: number): string {

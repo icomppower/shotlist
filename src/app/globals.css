@@ -38,14 +38,6 @@ a { color: inherit; }
   padding: 14px 0; border-bottom: 1px solid var(--line); margin-bottom: 18px;
 }
 .brand { display: flex; align-items: center; gap: 8px; text-decoration: none; font-weight: 700; letter-spacing: 0.02em; font-size: 1.05rem; }
-.modes {
-  display: inline-flex; background: var(--panel); border: 1px solid var(--line);
-  border-radius: 999px; padding: 3px; margin-left: auto;
-}
-.modes button {
-  border: 0; background: none; padding: 6px 14px; border-radius: 999px; color: var(--muted); font-weight: 600; font-size: 0.9rem;
-}
-.modes button.on { background: var(--accent); color: var(--accent-ink); }
 .badge {
   font-family: var(--mono); font-size: 0.72rem; color: var(--muted); border: 1px dashed var(--line);
   padding: 3px 8px; border-radius: 6px;
@@ -152,8 +144,8 @@ a { color: inherit; }
 .icon-btn { border: 0; background: none; color: var(--muted); font-size: 1.2rem; width: 32px; height: 32px; border-radius: 8px; }
 .icon-btn:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
 
-.sent { margin: 0; padding: 0 12px 10px 44px; font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
-.sent code, .planned code { font-family: var(--mono); color: #d9d4c4; }
+.sent { margin: 0; padding: 0 12px 10px 44px; cursor: text; font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
+.sent code { font-family: var(--mono); color: #d9d4c4; }
 .sent-label { font-family: var(--mono); color: var(--accent); }
 .changed { font-style: italic; }
 
@@ -172,14 +164,7 @@ a { color: inherit; }
   width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 9px 11px; resize: vertical;
 }
 .field textarea { font-family: var(--mono); font-size: 0.85rem; }
-.planned { margin: 0; font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
 
-.manual { display: grid; gap: 12px; }
-@media (min-width: 560px) { .manual { grid-template-columns: 200px 1fr; align-items: center; } }
-.sliders { display: grid; gap: 6px; }
-.slider { display: grid; grid-template-columns: 82px 1fr 56px; gap: 8px; align-items: center; font-size: 0.84rem; }
-.slider input { accent-color: var(--accent); width: 100%; }
-.slider output { text-align: right; color: var(--accent); }
 
 .add-shot {
   width: 100%; margin-top: 8px; padding: 12px; border-radius: var(--radius); border: 1px dashed var(--line);
@@ -205,7 +190,6 @@ a { color: inherit; }
   position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 7px; background: #000; flex: none;
 }
 .preview.thumb { width: 84px; }
-.manual-preview { width: 100%; }
 .preview-layer {
   position: absolute; inset: 0; background: center / cover no-repeat;
   background-image: radial-gradient(circle at 50% 45%, #ffcf7a 0 9%, #a3612a 10% 22%, #2c3550 23% 60%, #12131c 61%);
@@ -223,7 +207,6 @@ a { color: inherit; }
 .mv-fpv_dive { animation: mv-fpv 2.6s ease-in infinite; }
 .mv-crane_reveal { animation: mv-crane 3.2s ease-in-out infinite; }
 .mv-whip_pan { animation: mv-whip 2.6s linear infinite; }
-.mv-manual { animation: mv-manual 3s ease-in-out infinite; }
 
 @keyframes mv-push { 0% { transform: scale(1); } 85%, 100% { transform: scale(1.25); } }
 @keyframes mv-crash {
@@ -254,12 +237,6 @@ a { color: inherit; }
   58% { transform: scale(1.6) translateX(-10%); filter: blur(0); }
   100% { transform: scale(1.6) translateX(-10%); }
 }
-@keyframes mv-manual {
-  0% { transform: scale(var(--z0)); }
-  85%, 100% {
-    transform: scale(var(--z1)) translate(calc(var(--px) * -50%), calc(var(--py) * -50%)) rotate(var(--r));
-  }
-}
 
 @media (prefers-reduced-motion: reduce) {
   .preview-layer { animation-duration: 0s !important; animation-iteration-count: 1 !important; }
@@ -281,18 +258,12 @@ a { color: inherit; }
   font-family: var(--mono); font-size: 0.85rem;
 }
 .demo-line { margin: -2px 2px 0; }
-/* Director mode: "Describe the vibe" */
+/* "What should it feel like?" */
 .vibe-field {
   width: 100%; margin: -4px 0 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
   padding: 10px 12px; font-size: 0.92rem;
 }
 .vibe-field:focus { border-color: var(--accent); outline: none; }
-/* Generate: output size (the one field) */
-.size-field {
-  margin-left: auto; background: var(--bg); color: var(--muted); border: 1px solid var(--line); border-radius: 8px;
-  padding: 4px 8px; font-size: 0.8rem;
-}
-.size-field:focus { border-color: var(--accent); outline: none; }
 /* Shot cards: shared trailing prompt words collapsed behind "…" */
 .ellipsis {
   background: none; border: 1px solid var(--line); border-radius: 6px; padding: 0 6px; line-height: 1.2;

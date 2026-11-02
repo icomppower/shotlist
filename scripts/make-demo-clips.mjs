@@ -6,7 +6,7 @@
 //   3. npm run demo:clips                          # every move for every sample, then the trailer
 //
 // For each sample in src/lib/samples.ts this starts the app with RUNNER=comfy,
-// renders one 6 s Director-mode shot per move (prompt = planPrompt(move, ""),
+// renders one 6 s shot per move (prompt = planPrompt(move, ""),
 // exactly what demo mode replays), and saves them to
 // public/demo/<sample>/<move>.mp4, printing the credits each one used.
 // For the sample scene (text only), the app's own text path runs: shot 1 is
@@ -159,10 +159,9 @@ if (!args["trailer-only"]) {
     const scene = SCENES[sample];
     console.log(`\n▶ ${sample}: rendering ${scene ? "text-to-video shot 1 + " : ""}${moves.length} move(s) at ${CLIP_SECONDS}s with LTX on Comfy`);
     let p = scene ? await call("POST", "/api/projects", { scene }) : await newSampleProject(sample);
-    const template = p.shots[0];
-    const shot = (move, duration) => ({ ...template, id: undefined, move, duration, note: "" });
+    const shot = (move, duration) => ({ id: undefined, move, duration, shotNote: "" }); // prompt: the planner's default for the move
     const shots = [...(scene ? [shot(T2V_MOVE, T2V_SECONDS)] : []), ...moves.map((m) => shot(m, CLIP_SECONDS))];
-    p = await call("PATCH", `/api/projects/${p.id}`, { mode: "director", shots });
+    p = await call("PATCH", `/api/projects/${p.id}`, { shots });
     await call("POST", `/api/projects/${p.id}/generate`, {});
     p = await settle(p.id);
 

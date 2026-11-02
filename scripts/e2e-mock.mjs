@@ -5,7 +5,7 @@
 //   upload -> 4-shot list -> generate -> shot 2 refused, nothing stitched
 //   -> Edit & retry shot 2 only -> stitched MP4 -> swap one shot's move
 //   -> only that shot re-renders -> reorder re-stitches only
-//   -> Direct mode sends the prompt byte-for-byte -> daily cap shows the demo.
+//   -> an edited prompt is sent byte-for-byte -> daily cap shows the demo.
 // Then a text-only pass (a scene, no image): shot 1 renders text-to-video with
 //   the scene verbatim, its last frame becomes the still for shots 2+.
 // Then a server with RUNNER=demo (the live-link setup, no server key):
@@ -23,7 +23,7 @@ const PORT = Number(process.env.E2E_PORT ?? 3199);
 let BASE = `http://localhost:${PORT}`;
 let DATA_DIR = mkdtempSync(path.join(tmpdir(), "shotlist-e2e-"));
 const FAIL_SHOT = 2;
-const CAP = 14; // renders below: 4 + 1 retry + 1 swap + 4 size change + 1 direct = 11, then 4 more must be refused, 3 fit exactly
+const CAP = 11; // renders below: 4 + 1 retry + 1 swap + 1 edited prompt + 1 move change = 8, then 4 more must be refused, 3 fit exactly
 
 const log = (...a) => console.log("•", ...a);
 let server;
@@ -158,7 +158,7 @@ try {
   // 3. Edit & retry: only the failed shot re-renders ------------------------
   const counts = Object.fromEntries(p.shots.map((s) => [s.id, s.renderCount]));
   p = await call("PATCH", `/api/projects/${id}`, {
-    shots: p.shots.map((s) => (s.id === bad.id ? { ...s, note: "A quiet harbour at dawn" } : s)),
+    shots: p.shots.map((s) => (s.id === bad.id ? { ...s, prompt: "A quiet harbour at dawn" } : s)),
   });
   g = await call("POST", `/api/projects/${id}/generate`, { only: [bad.id] });
   assert(g.submitted.length === 1 && g.submitted[0] === bad.id, "Edit & retry submits only the failed shot");
@@ -175,6 +175,7 @@ try {
   const target = p.shots[2];
   p = await call("PATCH", `/api/projects/${id}`, { shots: p.shots.map((s) => (s.id === target.id ? { ...s, move: "whip_pan" } : s)) });
   assert(!p.outputFresh, "output is stale after changing a move");
+  assert(p.shots[2].prompt.includes("whip pan"), "an unedited prompt follows the new move");
   g = await call("POST", `/api/projects/${id}/generate`, {});
   assert(g.submitted.length === 1 && g.submitted[0] === target.id, "regenerate submits only the changed shot");
   p = await settle(id);
@@ -188,17 +189,6 @@ try {
   assert(Math.abs(file.duration - 14.5) < 0.15, `re-stitched duration ${file.duration.toFixed(2)}s`);
   assert(file.size === "1280x704", `default output size ${file.size}`);
 
-  // 4b. Change the output size -> every shot re-renders, stitched at that size
-  p = await call("PATCH", `/api/projects/${id}`, { size: "768x416" });
-  assert(p.size === "768x416" && !p.outputFresh, "size change makes the output stale");
-  p = await call("PATCH", `/api/projects/${id}`, { size: "640x360" });
-  assert(p.size === "768x416", "unknown size is ignored");
-  g = await call("POST", `/api/projects/${id}/generate`, {});
-  assert(g.submitted.length === p.shots.length, "size change re-renders every shot");
-  p = await settle(id);
-  file = await fetchDuration(id, p.output.file);
-  assert(p.outputFresh && file.size === "768x416", `stitched at ${file.size}`);
-
   // 5. Reorder -> re-stitch only ---------------------------------------------
   const order = p.shots.map((s) => s.renderCount).join(",");
   await call("PATCH", `/api/projects/${id}`, { shots: [...p.shots].reverse() });
@@ -207,9 +197,8 @@ try {
   p = await settle(id);
   assert(p.outputFresh && [...p.shots].reverse().map((s) => s.renderCount).join(",") === order, "reorder re-stitched without re-rendering");
 
-  // 6. Direct mode: byte-for-byte prompt ------------------------------------
-  p = await call("PATCH", `/api/projects/${id}`, { mode: "direct" });
-  assert(p.mode === "direct" && p.shots.every((s) => s.prompt.length > 0 && s.promptSeeded), "Director -> Direct seeds prompts from the planner");
+  // 6. An edited prompt is sent byte-for-byte --------------------------------
+  assert(p.shots.every((s) => s.prompt.length > 0), "every shot starts with the planner's prompt");
   const exact = "  close-up, rain on glass — “no” style words; 100% as typed\n\ttab ✓  ";
   p = await call("PATCH", `/api/projects/${id}`, { shots: p.shots.map((s, i) => (i === 0 ? { ...s, prompt: exact } : s)) });
   g = await call("POST", `/api/projects/${id}/generate`, {});
@@ -220,10 +209,16 @@ try {
   const job = JSON.parse(readFileSync(path.join(DATA_DIR, "mock-jobs", `${s0.render.jobId}.json`), "utf8"));
   assert(job.input.prompt === exact, "job JSON logs the exact prompt");
   assert(job.input.camera.kind === "preset" && job.input.camera.move === s0.move, "move only sets camera params");
+  p = await call("PATCH", `/api/projects/${id}`, { shots: p.shots.map((s, i) => (i === 0 ? { ...s, move: "fpv_dive" } : s)) });
+  assert(p.shots[0].prompt === exact, "changing the move leaves an edited prompt alone");
+  g = await call("POST", `/api/projects/${id}/generate`, {});
+  assert(g.submitted.length === 1, "the move change re-renders that shot");
+  p = await settle(id);
+  assert(p.shots[0].render.sentPrompt === exact, "still sent byte-for-byte after the move change");
 
   // 7. Daily cap -> demo state ---------------------------------------------
   const usage = JSON.parse(readFileSync(path.join(DATA_DIR, "usage", `${new Date().toISOString().slice(0, 10)}.json`), "utf8"));
-  assert(usage.shots === 11, `usage counted in storage: ${usage.shots} renders today`);
+  assert(usage.shots === 8, `usage counted in storage: ${usage.shots} renders today`);
   const p2 = await upload();
   g = await call("POST", `/api/projects/${p2.id}/generate`, {}, { allow: [429] });
   assert(g.status === 429 && g.demo === "cap", `over DAILY_SHOT_CAP=${CAP}: generate refused with demo state`);
@@ -336,7 +331,7 @@ async function textSuite() {
   p = await settle(p.id);
   assert(p.outputFresh, "text: all 4 shots rendered and stitched");
   const [s1, ...rest] = p.shots;
-  assert(s1.render.sentPrompt === scene, "text: shot 1 sent the scene verbatim (Direct-mode rule)");
+  assert(s1.render.sentPrompt === scene, "text: shot 1 sent the scene verbatim");
   const j1 = readJob("mock-jobs", s1.render.jobId);
   assert(j1.input.kind === "t2v" && !j1.input.imagePath && j1.input.prompt === scene, "text: shot 1 job is text-to-video with no image");
   assert(p.image?.file === `frame-${s1.render.key}.jpg` && p.frameOf === s1.render.key, "text: shot 1's last frame became the source still");
@@ -423,7 +418,6 @@ async function demoSuite() {
   assert(seen.graphs[before] === "t2v" && seen.graphs.slice(before + 1).every((k) => k === "i2v"), "BYOK text: shot 1 used shotlist-t2v.json, shots 2+ shotlist.json");
 
   // A custom prompt can't be replayed
-  p = await call("PATCH", `/api/projects/${p.id}`, { mode: "direct" });
   p = await call("PATCH", `/api/projects/${p.id}`, { shots: p.shots.map((s, i) => (i === 0 ? { ...s, prompt: "my own words" } : s)) });
   g = await call("POST", `/api/projects/${p.id}/generate`, {}, { allow: [400] });
   assert(g.status === 400 && g.error === "Paste a Comfy key to render your own.", "demo: a custom prompt asks for a key");
